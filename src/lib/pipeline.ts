@@ -60,7 +60,7 @@ INCLUDE (high priority):
 - Major product launches - new models (GPT-5, Claude 4), GA releases, major versions with user-facing changes
 - Ecosystem milestones - install/user milestones, ownership changes (MCP -> Linux Foundation), acquisitions, large partnerships
 - New tools that change daily workflows for analysts, PMs, or developers
-- Strategic moves by major AI companies - funding rounds, pivots, open-sourcing
+- Strategic moves by major AI companies - funding rounds, pivots, open-sourcing, restricted previews and selective releases that signal strategic direction
 - Widely discussed events - trending across tech media, HN, Twitter/X
 
 SKIP (low priority):
