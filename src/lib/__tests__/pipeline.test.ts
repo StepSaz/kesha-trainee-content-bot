@@ -58,7 +58,28 @@ describe('generatePipelinePost', () => {
     expect(result.timing).toHaveProperty('rewrite');
   });
 
-  it('returns failure with errors when validation fails', async () => {
+  it('auto-fixes post when validation fails on first attempt', async () => {
+    const fixedPost = VALID_POST + ' (fixed)';
+    mockCallClaude
+      .mockResolvedValueOnce('web context')
+      .mockResolvedValueOnce('topics')
+      .mockResolvedValueOnce('too long post')
+      .mockResolvedValueOnce('хорошо')
+      .mockResolvedValueOnce(fixedPost); // fixPost call
+
+    mockValidatePost
+      .mockReturnValueOnce({ valid: false, errors: ['Post too long: 4029 chars (max 4000)'] })
+      .mockReturnValueOnce({ valid: true, errors: [] });
+
+    const result = await generatePipelinePost();
+
+    expect(result.success).toBe(true);
+    expect(result.post).toBe(fixedPost);
+    expect(result.timing).toHaveProperty('fix1');
+    expect(mockCallClaude).toHaveBeenCalledTimes(5);
+  });
+
+  it('returns failure with errors when validation fails after all fix attempts', async () => {
     mockCallClaude.mockResolvedValue('some text');
     mockValidatePost.mockReturnValue({ valid: false, errors: ['Missing 🐤 emoji'] });
 
@@ -67,6 +88,8 @@ describe('generatePipelinePost', () => {
     expect(result.success).toBe(false);
     expect(result.errors).toContain('Missing 🐤 emoji');
     expect(result.post).toBeUndefined();
+    expect(result.timing).toHaveProperty('fix1');
+    expect(result.timing).toHaveProperty('fix2');
   });
 
   it('exposes rssContext, webContext, selectedTopics in result', async () => {

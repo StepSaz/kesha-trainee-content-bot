@@ -106,6 +106,20 @@ async function rewritePost(draft: string, review: string, cfg: PipelineConfig): 
   });
 }
 
+async function fixPost(post: string, errors: string[], cfg: PipelineConfig): Promise<string> {
+  const persona = readConfig('kesha-persona.txt');
+  const errorList = errors.join('\n');
+
+  return callClaude({
+    systemPrompt: persona,
+    userMessage: `Пост не прошёл проверку. Вот ошибки:\n\n${errorList}\n\nВот пост:\n\n${post}\n\nИсправь только эти проблемы. Сохрани голос и характер Кеши. Верни только исправленный пост без пояснений.`,
+    model: cfg.steps.rewrite.model,
+    temperature: cfg.steps.rewrite.temperature,
+    maxTokens: cfg.steps.rewrite.max_tokens,
+    tools: cfg.steps.rewrite.tools,
+  });
+}
+
 export async function generatePipelinePost(): Promise<PipelineResult> {
   const cfg = JSON.parse(readConfig('pipeline.json')) as PipelineConfig;
   const timing: Record<string, number> = {};
@@ -149,8 +163,18 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
       console.log('[pipeline] review: хорошо — skipping rewrite');
     }
 
-    // Validate
-    const validation = validatePost(finalPost);
+    // Validate and auto-fix if needed (up to 2 attempts)
+    const MAX_FIX_ATTEMPTS = 2;
+    let validation = validatePost(finalPost);
+
+    for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS && !validation.valid; attempt++) {
+      console.log(`[pipeline] validation failed (attempt ${attempt + 1}): ${validation.errors.join(', ')}`);
+      const tFix = Date.now();
+      finalPost = await fixPost(finalPost, validation.errors, cfg);
+      timing[`fix${attempt + 1}`] = Date.now() - tFix;
+      console.log(`[pipeline] fix attempt ${attempt + 1} done in ${timing[`fix${attempt + 1}`]}ms`);
+      validation = validatePost(finalPost);
+    }
 
     return {
       success: validation.valid,
