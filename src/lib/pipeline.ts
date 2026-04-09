@@ -54,9 +54,29 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
 }
 
 async function selectTopics(rssContext: string, webContext: string, cfg: PipelineConfig): Promise<string> {
+  const systemPrompt = `You are a content curator for a Russian-language Telegram channel about AI and tech. Audience: IT analysts, product managers, and a broad tech audience. Practical impact and ecosystem significance matter more than technical depth.
+
+INCLUDE (high priority):
+- Major product launches - new models (GPT-5, Claude 4), GA releases, major versions with user-facing changes
+- Ecosystem milestones - install/user milestones, ownership changes (MCP -> Linux Foundation), acquisitions, large partnerships
+- New tools that change daily workflows for analysts, PMs, or developers
+- Strategic moves by major AI companies - funding rounds, pivots, open-sourcing
+- Widely discussed events - trending across tech media, HN, Twitter/X
+
+SKIP (low priority):
+- ML research without direct user impact - KV-cache optimizations, quantization methods, architectural improvements
+- Arxiv preprints and academic papers, even from major labs
+- Minor version bumps, patches, changelogs
+- Narrow benchmarks without a practical "so what"
+- Technical RFCs and internal standards
+
+If fewer than 3 topics qualify under the rubric above, select the best available (minimum 2) and append SPARSE_WEEK on a new line at the very end of your response.`;
+
+  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the rubric. For each: topic name, source URL, and why it's interesting for IT analysts/PMs (1-2 sentences in Russian). If qualifying topics are fewer than 3, select the best 2 and append SPARSE_WEEK at the end.`;
+
   return callClaude({
-    systemPrompt: 'You are a content curator for a Russian-language Telegram channel about AI and tech. Audience: IT analysts and product managers.',
-    userMessage: `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect the 3-5 most interesting topics. For each: topic name, source URL, and why it's interesting for IT analysts/PMs (1-2 sentences in Russian).`,
+    systemPrompt,
+    userMessage,
     model: cfg.steps.selectTopics.model,
     temperature: cfg.steps.selectTopics.temperature,
     maxTokens: cfg.steps.selectTopics.max_tokens,
