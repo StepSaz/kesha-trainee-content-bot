@@ -113,56 +113,70 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
   const cfg = JSON.parse(readConfig('pipeline.json')) as PipelineConfig;
   const timing: Record<string, number> = {};
 
-  // Step 0: Gather context in parallel
-  const t0 = Date.now();
-  const [rssContext, webContext] = await Promise.all([
-    fetchRssContext(),
-    fetchWebContext(cfg),
-  ]);
-  timing.gatherContext = Date.now() - t0;
-  console.log(`[pipeline] context gathered in ${timing.gatherContext}ms`);
+  try {
+    // Step 0: Gather context in parallel
+    const t0 = Date.now();
+    const [rssContext, webContext] = await Promise.all([
+      fetchRssContext(),
+      fetchWebContext(cfg),
+    ]);
+    timing.gatherContext = Date.now() - t0;
+    console.log(`[pipeline] context gathered in ${timing.gatherContext}ms`);
 
-  // Step 1: Select topics
-  const t1 = Date.now();
-  const selectedTopics = await selectTopics(rssContext, webContext, cfg);
-  timing.selectTopics = Date.now() - t1;
-  console.log(`[pipeline] topics selected in ${timing.selectTopics}ms`);
+    // Step 1: Select topics
+    const t1 = Date.now();
+    const selectedTopics = await selectTopics(rssContext, webContext, cfg);
+    timing.selectTopics = Date.now() - t1;
+    console.log(`[pipeline] topics selected in ${timing.selectTopics}ms`);
 
-  // Step 2: Generate
-  const t2 = Date.now();
-  const draft = await generatePost(rssContext, webContext, selectedTopics, cfg);
-  timing.generate = Date.now() - t2;
-  console.log(`[pipeline] post generated in ${timing.generate}ms`);
+    // Step 2: Generate
+    const t2 = Date.now();
+    const draft = await generatePost(rssContext, webContext, selectedTopics, cfg);
+    timing.generate = Date.now() - t2;
+    console.log(`[pipeline] post generated in ${timing.generate}ms`);
 
-  // Step 3: Review
-  const t3 = Date.now();
-  const review = await reviewPost(draft, cfg);
-  timing.review = Date.now() - t3;
-  console.log(`[pipeline] review done in ${timing.review}ms`);
+    // Step 3: Review
+    const t3 = Date.now();
+    const review = await reviewPost(draft, cfg);
+    timing.review = Date.now() - t3;
+    console.log(`[pipeline] review done in ${timing.review}ms`);
 
-  // Step 4: Rewrite only if not "хорошо"
-  let finalPost = draft;
-  if (!review.toLowerCase().startsWith('хорошо')) {
-    const t4 = Date.now();
-    finalPost = await rewritePost(draft, review, cfg);
-    timing.rewrite = Date.now() - t4;
-    console.log(`[pipeline] rewrite done in ${timing.rewrite}ms`);
-  } else {
-    console.log('[pipeline] review: хорошо — skipping rewrite');
+    // Step 4: Rewrite only if not "хорошо"
+    let finalPost = draft;
+    if (!review.toLowerCase().startsWith('хорошо')) {
+      const t4 = Date.now();
+      finalPost = await rewritePost(draft, review, cfg);
+      timing.rewrite = Date.now() - t4;
+      console.log(`[pipeline] rewrite done in ${timing.rewrite}ms`);
+    } else {
+      console.log('[pipeline] review: хорошо — skipping rewrite');
+    }
+
+    // Validate
+    const validation = validatePost(finalPost);
+
+    return {
+      success: validation.valid,
+      post: validation.valid ? finalPost : undefined,
+      rssContext,
+      webContext,
+      selectedTopics,
+      draft,
+      review,
+      errors: validation.valid ? undefined : validation.errors,
+      timing,
+    };
+  } catch (err) {
+    console.error('[pipeline] unexpected error:', err);
+    return {
+      success: false,
+      rssContext: '',
+      webContext: '',
+      selectedTopics: '',
+      draft: '',
+      review: '',
+      errors: [err instanceof Error ? err.message : String(err)],
+      timing,
+    };
   }
-
-  // Validate
-  const validation = validatePost(finalPost);
-
-  return {
-    success: validation.valid,
-    post: validation.valid ? finalPost : undefined,
-    rssContext,
-    webContext,
-    selectedTopics,
-    draft,
-    review,
-    errors: validation.valid ? undefined : validation.errors,
-    timing,
-  };
 }

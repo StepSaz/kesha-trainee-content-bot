@@ -38,6 +38,7 @@ describe('generatePipelinePost', () => {
     expect(result.success).toBe(true);
     expect(result.post).toBe(VALID_POST);
     expect(mockCallClaude).toHaveBeenCalledTimes(4); // no rewrite
+    expect(result.timing).not.toHaveProperty('rewrite');
   });
 
   it('calls rewrite when review does not start with хорошо', async () => {
@@ -54,6 +55,7 @@ describe('generatePipelinePost', () => {
     expect(mockCallClaude).toHaveBeenCalledTimes(5);
     expect(result.draft).toBe(VALID_POST);
     expect(result.post).toBe(rewrittenPost);
+    expect(result.timing).toHaveProperty('rewrite');
   });
 
   it('returns failure with errors when validation fails', async () => {
