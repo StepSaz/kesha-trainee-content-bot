@@ -94,10 +94,25 @@ function renderPage(result: Result | null, secret: string): string {
   <div class="status-row">${statusBadge} ${finishedAt}</div>
   ${body}
   <div>
-    <a class="btn" href="${triggerUrl}" onclick="this.textContent='⏳ запущено…'">▶ Запустить тест</a>
+    <button class="btn" id="run-btn" onclick="runTest()">▶ Запустить тест</button>
     <a class="btn secondary" href="?secret=${secret}">↻ Обновить</a>
   </div>
 </div>
+<script>
+async function runTest() {
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ запущено…';
+  try {
+    await fetch('${triggerUrl}');
+    btn.textContent = '✅ запущено, жди 1-2 мин';
+    setTimeout(() => location.reload(), 90000);
+  } catch(e) {
+    btn.textContent = '❌ ошибка, попробуй снова';
+    btn.disabled = false;
+  }
+}
+</script>
 </body>
 </html>`;
 }
