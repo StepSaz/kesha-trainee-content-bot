@@ -1,61 +1,127 @@
 import type { Config } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
 
-interface Result {
+interface StoredResult {
   status: 'running' | 'ok' | 'failed' | 'error';
   startedAt?: string;
   finishedAt?: string;
   mode?: string;
+  // pipeline-specific
+  rssContext?: string;
+  webContext?: string;
+  selectedTopics?: string;
+  draft?: string;
+  review?: string;
+  reviewVerdict?: string;
+  rewrote?: boolean;
+  // shared
   post?: string;
   errors?: string[];
   timing?: Record<string, number>;
   sendResult?: { success: boolean; messageId?: number; error?: string } | null;
 }
 
-function escapeHtml(s: string): string {
+function e(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function renderPost(post: string): string {
-  return escapeHtml(post).replace(/\n/g, '<br>');
+function section(id: string, label: string, badge: string, content: string, open = false): string {
+  return `
+<details class="section" ${open ? 'open' : ''}>
+  <summary><span class="sec-label">${label}</span> <span class="sec-badge">${badge}</span></summary>
+  <pre class="sec-body">${content}</pre>
+</details>`;
 }
 
-function timingTable(timing: Record<string, number>): string {
-  const rows = Object.entries(timing)
-    .map(([k, v]) => `<tr><td>${k}</td><td>${(v / 1000).toFixed(1)}s</td></tr>`)
+function timingRows(timing: Record<string, number>): string {
+  return Object.entries(timing)
+    .map(([k, v]) => `<tr><td>${k}</td><td class="num">${(v / 1000).toFixed(1)}s</td></tr>`)
     .join('');
-  return `<table class="timing"><tbody>${rows}</tbody></table>`;
 }
 
-function renderPage(result: Result | null, secret: string): string {
+function renderPage(result: StoredResult | null, secret: string): string {
   const triggerUrl = `/.netlify/functions/kesha-test-background?secret=${secret}&mode=pipeline&channel=test`;
 
-  let statusBadge = '';
-  let body = '';
+  let statusBadge = '<span class="badge grey">нет данных</span>';
+  let sections = '';
+  let timingHtml = '';
 
   if (!result) {
-    statusBadge = '<span class="badge grey">нет данных</span>';
-    body = '<p class="hint">Нажми «Запустить тест», подожди 1-2 минуты, обнови страницу.</p>';
+    sections = '<p class="hint">Нажми «Запустить тест», подожди 1-2 минуты, обнови страницу.</p>';
   } else if (result.status === 'running') {
-    statusBadge = '<span class="badge yellow">⏳ генерирует...</span>';
-    body = `<p class="hint">Началось в ${result.startedAt ?? ''}. Обнови страницу через минуту.</p>
-    <script>setTimeout(()=>location.reload(), 15000);</script>`;
-  } else if (result.status === 'ok' && result.post) {
-    const sent = result.sendResult?.success ? '✅ отправлено в Telegram' : '⚠️ не отправлено в Telegram';
-    statusBadge = `<span class="badge green">✅ готово</span> <span class="meta">${sent}</span>`;
-    body = `
-      <div class="post">${renderPost(result.post)}</div>
-      ${result.timing ? timingTable(result.timing) : ''}
-    `;
+    statusBadge = '<span class="badge yellow">⏳ генерирует…</span>';
+    sections = `<p class="hint">Началось в ${result.startedAt ?? ''}. Страница обновится автоматически.</p>
+<script>setTimeout(()=>location.reload(),15000);</script>`;
   } else {
-    statusBadge = '<span class="badge red">❌ ошибка</span>';
-    const errs = (result.errors ?? []).map(e => `<li>${escapeHtml(e)}</li>`).join('');
-    body = `<ul class="errors">${errs}</ul>`;
+    if (result.status === 'ok') {
+      statusBadge = '<span class="badge green">✅ готово</span>';
+    } else {
+      statusBadge = '<span class="badge red">❌ ошибка</span>';
+    }
+
+    // Errors
+    if (result.errors?.length) {
+      sections += `<div class="error-box">${result.errors.map(err => `<div>${e(err)}</div>`).join('')}</div>`;
+    }
+
+    // Pipeline debug sections
+    if (result.mode !== 'managed') {
+      const rssLines = result.rssContext ? result.rssContext.split('\n').length : 0;
+      const webLines = result.webContext ? result.webContext.split('\n').length : 0;
+
+      sections += section('rss', '📡 RSS контекст', `${rssLines} строк`,
+        e(result.rssContext ?? '(пусто)'));
+
+      sections += section('web', '🌐 Web поиск', `${webLines} строк`,
+        e(result.webContext ?? '(пусто)'));
+
+      sections += section('topics', '🎯 Выбранные темы', '',
+        e(result.selectedTopics ?? '(пусто)'), true);
+
+      const reviewVerdict = result.reviewVerdict ?? '';
+      const reviewBadge = reviewVerdict.toLowerCase().startsWith('хорошо')
+        ? '✅ хорошо — перезапись пропущена'
+        : result.rewrote
+          ? `⚠️ "${e(reviewVerdict)}" — перезаписан`
+          : `⚠️ "${e(reviewVerdict)}"`;
+
+      sections += section('draft', '✏️ Черновик', '',
+        e(result.draft ?? '(пусто)'));
+
+      sections += section('review', '👁️ Ревью редактора', reviewBadge,
+        e(result.review ?? '(пусто)'), true);
+    }
+
+    // Final post
+    if (result.post) {
+      const sent = result.sendResult?.success
+        ? '✅ отправлено в Telegram'
+        : result.sendResult
+          ? `❌ не отправлено: ${e(result.sendResult.error ?? '')}`
+          : '— не отправлялось';
+      sections += `
+<details class="section post-section" open>
+  <summary><span class="sec-label">📨 Финальный пост</span> <span class="sec-badge">${sent}</span></summary>
+  <div class="post-body">${e(result.post).replace(/\n/g, '<br>')}</div>
+</details>`;
+    }
+
+    // Timing
+    if (result.timing) {
+      const total = Object.values(result.timing).reduce((a, b) => a + b, 0);
+      timingHtml = `
+<table class="timing">
+  <thead><tr><th>шаг</th><th>время</th></tr></thead>
+  <tbody>${timingRows(result.timing)}<tr class="total"><td>итого</td><td class="num">${(total / 1000).toFixed(1)}s</td></tr></tbody>
+</table>`;
+    }
   }
 
   const finishedAt = result?.finishedAt
     ? `<span class="meta">завершено: ${result.finishedAt}</span>`
-    : '';
+    : result?.startedAt
+      ? `<span class="meta">начато: ${result.startedAt}</span>`
+      : '';
 
   return `<!DOCTYPE html>
 <html lang="ru">
@@ -64,37 +130,51 @@ function renderPage(result: Result | null, secret: string): string {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Кеша — тест</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; background: #f0f2f5; min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 32px 16px; }
-  .card { background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.08); padding: 28px; max-width: 640px; width: 100%; }
-  h1 { font-size: 1.4rem; margin-bottom: 4px; }
-  .subtitle { color: #666; font-size: .875rem; margin-bottom: 20px; }
-  .status-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
-  .badge { border-radius: 8px; padding: 4px 12px; font-size: .875rem; font-weight: 600; }
-  .badge.green { background: #e6f4ea; color: #1a7f3c; }
-  .badge.yellow { background: #fff8e1; color: #b45309; }
-  .badge.red { background: #fce8e6; color: #c62828; }
-  .badge.grey { background: #f1f3f4; color: #5f6368; }
-  .meta { color: #888; font-size: .8rem; }
-  .post { background: #f7f8fa; border-left: 4px solid #229ed9; border-radius: 8px; padding: 16px 20px; line-height: 1.6; font-size: .95rem; white-space: pre-wrap; word-break: break-word; margin-bottom: 20px; }
-  .hint { color: #555; font-size: .9rem; margin-bottom: 20px; }
-  .errors { color: #c62828; font-size: .875rem; padding-left: 20px; margin-bottom: 20px; }
-  .timing { border-collapse: collapse; font-size: .8rem; color: #555; margin-top: 8px; }
-  .timing td { padding: 2px 12px 2px 0; }
-  .btn { display: inline-block; background: #229ed9; color: #fff; border: none; border-radius: 10px; padding: 10px 22px; font-size: .95rem; font-weight: 600; cursor: pointer; text-decoration: none; margin-top: 8px; }
-  .btn:hover { background: #1a86bb; }
-  .btn.secondary { background: #f1f3f4; color: #333; margin-left: 8px; }
-  .btn.secondary:hover { background: #e2e5e9; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f0f2f5;min-height:100vh;padding:24px 16px}
+.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.08);padding:24px;max-width:780px;margin:0 auto}
+h1{font-size:1.3rem;margin-bottom:3px}
+.subtitle{color:#888;font-size:.8rem;margin-bottom:16px}
+.status-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.badge{border-radius:8px;padding:3px 11px;font-size:.82rem;font-weight:700}
+.badge.green{background:#e6f4ea;color:#1a7f3c}
+.badge.yellow{background:#fff8e1;color:#b45309}
+.badge.red{background:#fce8e6;color:#c62828}
+.badge.grey{background:#f1f3f4;color:#5f6368}
+.meta{color:#aaa;font-size:.78rem}
+.hint{color:#666;font-size:.88rem;margin-bottom:16px}
+.error-box{background:#fce8e6;border-radius:8px;padding:12px 16px;font-size:.82rem;color:#b71c1c;margin-bottom:14px;word-break:break-word}
+.section{border:1px solid #e8eaed;border-radius:10px;margin-bottom:10px;overflow:hidden}
+.section summary{cursor:pointer;padding:10px 14px;background:#f8f9fa;display:flex;align-items:center;gap:8px;user-select:none;list-style:none}
+.section summary::-webkit-details-marker{display:none}
+.section[open] summary{border-bottom:1px solid #e8eaed}
+.sec-label{font-weight:600;font-size:.88rem}
+.sec-badge{color:#555;font-size:.78rem;margin-left:auto}
+.sec-body{padding:12px 14px;font-size:.78rem;line-height:1.55;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow-y:auto;color:#333;background:#fff}
+.post-section .post-body{padding:14px 16px;line-height:1.65;font-size:.9rem;background:#f7fbff;border-left:4px solid #229ed9;word-break:break-word}
+.timing{border-collapse:collapse;font-size:.78rem;color:#555;margin-top:14px;width:100%}
+.timing th{text-align:left;padding:4px 10px;border-bottom:1px solid #e8eaed;color:#888;font-weight:600}
+.timing td{padding:3px 10px}
+.timing tr.total td{font-weight:700;border-top:1px solid #e8eaed;color:#333}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.actions{margin-top:18px;display:flex;gap:10px;flex-wrap:wrap}
+.btn{border:none;border-radius:10px;padding:9px 20px;font-size:.9rem;font-weight:600;cursor:pointer}
+.btn.primary{background:#229ed9;color:#fff}
+.btn.primary:hover{background:#1a86bb}
+.btn.primary:disabled{background:#a0c4dc;cursor:not-allowed}
+.btn.secondary{background:#f1f3f4;color:#333;text-decoration:none;display:inline-flex;align-items:center}
+.btn.secondary:hover{background:#e2e5e9}
 </style>
 </head>
 <body>
 <div class="card">
   <h1>🐤 Кеша — тест поста</h1>
-  <p class="subtitle">Последний запуск · mode: ${result?.mode ?? '—'}</p>
+  <p class="subtitle">mode: ${result?.mode ?? '—'} · pipeline debug</p>
   <div class="status-row">${statusBadge} ${finishedAt}</div>
-  ${body}
-  <div>
-    <button class="btn" id="run-btn" onclick="runTest()">▶ Запустить тест</button>
+  ${sections}
+  ${timingHtml}
+  <div class="actions">
+    <button class="btn primary" id="run-btn" onclick="runTest()">▶ Запустить тест</button>
     <a class="btn secondary" href="?secret=${secret}">↻ Обновить</a>
   </div>
 </div>
@@ -104,11 +184,12 @@ async function runTest() {
   btn.disabled = true;
   btn.textContent = '⏳ запущено…';
   try {
-    await fetch('${triggerUrl}');
+    const r = await fetch('${triggerUrl}');
+    if (r.status === 401) { btn.textContent = '❌ неверный секрет'; btn.disabled = false; return; }
     btn.textContent = '✅ запущено, жди 1-2 мин';
     setTimeout(() => location.reload(), 90000);
-  } catch(e) {
-    btn.textContent = '❌ ошибка, попробуй снова';
+  } catch(err) {
+    btn.textContent = '❌ ошибка сети';
     btn.disabled = false;
   }
 }
@@ -126,7 +207,7 @@ export default async (req: Request): Promise<Response> => {
   }
 
   const store = getStore('kesha');
-  const result = await store.get('latest-result', { type: 'json' }) as Result | null;
+  const result = await store.get('latest-result', { type: 'json' }) as StoredResult | null;
 
   return new Response(renderPage(result, secret), {
     status: 200,

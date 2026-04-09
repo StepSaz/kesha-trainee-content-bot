@@ -1,6 +1,6 @@
 import type { Config } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
-import { generatePipelinePost } from '../../src/lib/pipeline.js';
+import { generatePipelinePost, type PipelineResult } from '../../src/lib/pipeline.js';
 import { generateManagedPost } from '../../src/lib/managed-agent.js';
 import { sendToChannel } from '../../src/lib/telegram.js';
 
@@ -24,29 +24,49 @@ export default async (req: Request): Promise<Response> => {
   console.log(`[kesha-test] started mode=${mode} channel=${channel}`);
 
   try {
-    let result;
-    if (mode === 'managed') {
-      result = await generateManagedPost();
-    } else {
-      result = await generatePipelinePost();
-    }
-
     let sendResult = null;
-    if (result.success && chatId) {
-      sendResult = await sendToChannel(result.post!, chatId);
+
+    if (mode === 'managed') {
+      const result = await generateManagedPost();
+      if (result.success && chatId) {
+        sendResult = await sendToChannel(result.post!, chatId);
+      }
+      await store.setJSON('latest-result', {
+        status: result.success ? 'ok' : 'failed',
+        finishedAt: new Date().toISOString(),
+        mode,
+        post: result.post,
+        errors: result.errors,
+        sendResult,
+      });
+    } else {
+      const result: PipelineResult = await generatePipelinePost();
+      if (result.success && chatId) {
+        sendResult = await sendToChannel(result.post!, chatId);
+      }
+
+      const rewrote = !result.review.toLowerCase().startsWith('хорошо') && !!result.post && result.post !== result.draft;
+
+      await store.setJSON('latest-result', {
+        status: result.success ? 'ok' : 'failed',
+        finishedAt: new Date().toISOString(),
+        mode,
+        // pipeline debug data
+        rssContext: result.rssContext,
+        webContext: result.webContext,
+        selectedTopics: result.selectedTopics,
+        draft: result.draft,
+        review: result.review,
+        reviewVerdict: result.review.split('\n')[0].trim(),
+        rewrote,
+        post: result.post,
+        errors: result.errors,
+        timing: result.timing,
+        sendResult,
+      });
     }
 
-    await store.setJSON('latest-result', {
-      status: result.success ? 'ok' : 'failed',
-      finishedAt: new Date().toISOString(),
-      mode,
-      post: result.post,
-      errors: result.errors,
-      timing: (result as { timing?: Record<string, number> }).timing,
-      sendResult,
-    });
-
-    console.log('[kesha-test] done, success=', result.success);
+    console.log('[kesha-test] done');
   } catch (err) {
     await store.setJSON('latest-result', {
       status: 'error',
