@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@netlify/blobs": "^10.7.4",
     "@netlify/functions": "^2.8.1",
     "fast-xml-parser": "^4.4.1"
   },
