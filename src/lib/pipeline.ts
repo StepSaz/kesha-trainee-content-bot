@@ -70,9 +70,9 @@ SKIP (low priority):
 - Narrow benchmarks without a practical "so what"
 - Technical RFCs and internal standards
 
-If fewer than 3 topics qualify under the rubric above, select the best available (minimum 2) and append SPARSE_WEEK on a new line at the very end of your response.`;
+Normally aim for 4-5 topics. If only 3 topics qualify under the rubric, still select them but append SPARSE_WEEK on a new line at the very end of your response to signal a lean week.`;
 
-  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the rubric. For each: topic name, source URL, and why it's interesting for IT analysts/PMs (1-2 sentences in Russian). If qualifying topics are fewer than 3, select the best 2 and append SPARSE_WEEK at the end.`;
+  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the rubric. For each: topic name, source, and why it's interesting for IT analysts/PMs (1-2 sentences in Russian). If only 3 topics qualify (lean week), select them and append SPARSE_WEEK at the end.`;
 
   return callClaude({
     systemPrompt,
@@ -97,7 +97,7 @@ async function generatePost(
 
   const isSparseWeek = selectedTopics.includes('SPARSE_WEEK');
   const sparseNote = isSparseWeek
-    ? '\n\nВНИМАНИЕ: эта неделя скудная - найдено только 2 темы (SPARSE_WEEK). Напиши пост на 2 темы и добавь естественную реплику от Кеши о том, что на этой неделе негусто, например: «Честно, на этой неделе негусто - нашёл только два повода написать».'
+    ? '\n\nВНИМАНИЕ: эта неделя небогатая (SPARSE_WEEK) - нашлось только 3 темы вместо обычных 4-5. Напиши пост на 3 темы и добавь естественную реплику от Кеши о том, что на этой неделе маловато, например: «Честно, неделя небогатая - нашёл всего три темы, но они стоящие».'
     : '';
 
   return callClaude({

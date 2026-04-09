@@ -119,7 +119,7 @@ describe('generatePipelinePost', () => {
     const generateCall = mockCallClaude.mock.calls[2];
     const userMessage = generateCall[0].userMessage as string;
     expect(userMessage).toContain('SPARSE_WEEK');
-    expect(userMessage).toContain('2 темы');
+    expect(userMessage).toContain('3 темы');
   });
 
   it('includes timing keys for each step', async () => {

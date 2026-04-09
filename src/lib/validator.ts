@@ -34,8 +34,8 @@ export function validatePost(text: string): ValidationResult {
   }
 
   const sourceCount = (text.match(/📎/g) ?? []).length;
-  if (sourceCount < 2) {
-    errors.push(`Too few news items: ${sourceCount} source(s) found (min 2 required)`);
+  if (sourceCount < 3) {
+    errors.push(`Too few news items: ${sourceCount} source(s) found (min 3 required)`);
   }
 
   return { valid: errors.length === 0, errors };
