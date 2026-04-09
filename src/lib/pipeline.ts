@@ -38,9 +38,14 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   const sources = JSON.parse(readConfig('sources.json')) as SourcesConfig;
   const queries = sources.search_queries.slice(0, 5).join(', ');
 
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const todayStr = now.toISOString().slice(0, 10);
+
   return callClaude({
     systemPrompt: 'You are a research assistant. Search the web for recent AI and tech news and return a structured summary with sources and key findings.',
-    userMessage: `Search for the latest AI and tech news from this week. Focus on: ${queries}. Return a structured summary of the 5-7 most interesting findings with source URLs.`,
+    userMessage: `Today is ${todayStr}. Search for AI and tech news published between ${cutoffStr} and ${todayStr} (last 2 weeks only). Focus on: ${queries}. Skip anything older than ${cutoffStr}. Return a structured summary of the 5-7 most interesting findings — include the publication date and source URL for each.`,
     model: cfg.steps.gatherWeb.model,
     temperature: cfg.steps.gatherWeb.temperature,
     maxTokens: cfg.steps.gatherWeb.max_tokens,
