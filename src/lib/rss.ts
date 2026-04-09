@@ -2,11 +2,6 @@ import { XMLParser } from 'fast-xml-parser';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-const sourcesPath = join(process.cwd(), 'src/config/sources.json');
-const sources = JSON.parse(readFileSync(sourcesPath, 'utf-8')) as {
-  rss_feeds: Array<{ name: string; url: string; max_items: number }>;
-};
-
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, '').trim();
 }
@@ -19,6 +14,11 @@ interface RssItem {
 }
 
 export async function fetchRssContext(): Promise<string> {
+  const sourcesPath = join(process.cwd(), 'src/config/sources.json');
+  const sources = JSON.parse(readFileSync(sourcesPath, 'utf-8')) as {
+    rss_feeds: Array<{ name: string; url: string; max_items: number }>;
+  };
+
   const results: string[] = [];
 
   for (const feed of sources.rss_feeds) {
