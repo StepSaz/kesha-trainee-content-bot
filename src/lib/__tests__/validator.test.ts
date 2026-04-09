@@ -93,8 +93,22 @@ describe('validatePost', () => {
     expect(result.errors.some(e => e.includes('long'))).toBe(true);
   });
 
-  it('fails with fewer than 3 news items', () => {
-    const post = VALID_POST.replace(/📎 источник: https:\/\/example\.com\/3\n\n~ ~ ~\n\n/, '');
+  it('fails with fewer than 2 news items', () => {
+    const post = VALID_POST
+      .replace(/📎 источник: https:\/\/example\.com\/3\n\n~ ~ ~\n\n/, '')
+      .replace(/📎 источник: https:\/\/example\.com\/2\n\n~ ~ ~\n\n/, '');
+    const result = validatePost(post);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('Too few news items'))).toBe(true);
+  });
+
+  it('passes with exactly 2 news items (sparse week)', () => {
+    const post = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. 🐤\n\nКеша тут🐤\n\nНовость 1.\n📎 источник: https://example.com/1\n\n~ ~ ~\n\nНовость 2.\n📎 источник: https://example.com/2\n\nВаш стажер-Кеша @st_szs 🐤`;
+    expect(validatePost(post).errors.some(e => e.includes('Too few news items'))).toBe(false);
+  });
+
+  it('fails with only 1 news item', () => {
+    const post = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. 🐤\n\nКеша тут🐤\n\nНовость 1.\n📎 источник: https://example.com/1\n\nВаш стажер-Кеша @st_szs 🐤`;
     const result = validatePost(post);
     expect(result.valid).toBe(false);
     expect(result.errors.some(e => e.includes('Too few news items'))).toBe(true);
