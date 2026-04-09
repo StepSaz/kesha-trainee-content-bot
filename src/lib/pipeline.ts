@@ -1,14 +1,11 @@
 import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { callClaude } from './claude.js';
 import { fetchRssContext } from './rss.js';
 import { validatePost } from './validator.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 function readConfig(filename: string): string {
-  return readFileSync(join(__dirname, '../config', filename), 'utf-8');
+  return readFileSync(join(import.meta.dirname, '../config', filename), 'utf-8');
 }
 
 interface PipelineConfig {

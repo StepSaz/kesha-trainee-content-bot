@@ -1,19 +1,17 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { validatePost } from './validator.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const BETA_HEADER = 'managed-agents-2026-04-01';
 
 function readPrompt(filename: string): string {
-  return readFileSync(join(__dirname, '../config', filename), 'utf-8');
+  return readFileSync(join(import.meta.dirname, '../config', filename), 'utf-8');
 }
 
 function readPipelineConfig() {
   return JSON.parse(
-    readFileSync(join(__dirname, '../config/pipeline.json'), 'utf-8')
+    readFileSync(join(import.meta.dirname, '../config/pipeline.json'), 'utf-8')
   ) as { managed: { model: string } };
 }
 
