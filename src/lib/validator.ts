@@ -33,5 +33,10 @@ export function validatePost(text: string): ValidationResult {
     errors.push(`Post too long: ${text.length} chars (max 4000)`);
   }
 
+  const sourceCount = (text.match(/📎/g) ?? []).length;
+  if (sourceCount < 3) {
+    errors.push(`Too few news items: ${sourceCount} source(s) found (min 3 required)`);
+  }
+
   return { valid: errors.length === 0, errors };
 }

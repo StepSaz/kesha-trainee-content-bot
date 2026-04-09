@@ -5,11 +5,22 @@ const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Н
 
 Кеша на проводе🐤
 
-Это тестовый пост про AI.
+Новость первая про AI.
+📎 источник: https://example.com/1
 
 ~ ~ ~
 
-@psyreq, как тебе? 🫡🐤`;
+Новость вторая про Claude.
+📎 источник: https://example.com/2
+
+~ ~ ~
+
+Новость третья про Cursor.
+📎 источник: https://example.com/3
+
+~ ~ ~
+
+Ваш стажер-Кеша @st_szs 🐤`;
 
 describe('validatePost', () => {
   it('passes a valid post', () => {
@@ -80,6 +91,17 @@ describe('validatePost', () => {
     const result = validatePost(post);
     expect(result.valid).toBe(false);
     expect(result.errors.some(e => e.includes('long'))).toBe(true);
+  });
+
+  it('fails with fewer than 3 news items', () => {
+    const post = VALID_POST.replace(/📎 источник: https:\/\/example\.com\/3\n\n~ ~ ~\n\n/, '');
+    const result = validatePost(post);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('Too few news items'))).toBe(true);
+  });
+
+  it('passes with exactly 3 news items', () => {
+    expect(validatePost(VALID_POST).errors.some(e => e.includes('Too few news items'))).toBe(false);
   });
 
   it('collects multiple errors', () => {
