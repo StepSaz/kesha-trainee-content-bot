@@ -6,12 +6,12 @@ import { validatePost } from './validator.js';
 const BETA_HEADER = 'managed-agents-2026-04-01';
 
 function readPrompt(filename: string): string {
-  return readFileSync(join(import.meta.dirname, '../config', filename), 'utf-8');
+  return readFileSync(join(process.cwd(), 'src/config', filename), 'utf-8');
 }
 
 function readPipelineConfig() {
   return JSON.parse(
-    readFileSync(join(import.meta.dirname, '../config/pipeline.json'), 'utf-8')
+    readFileSync(join(process.cwd(), 'src/config/pipeline.json'), 'utf-8')
   ) as { managed: { model: string } };
 }
 

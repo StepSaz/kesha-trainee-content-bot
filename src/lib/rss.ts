@@ -2,7 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-const sourcesPath = join(import.meta.dirname, '../config/sources.json');
+const sourcesPath = join(process.cwd(), 'src/config/sources.json');
 const sources = JSON.parse(readFileSync(sourcesPath, 'utf-8')) as {
   rss_feeds: Array<{ name: string; url: string; max_items: number }>;
 };
