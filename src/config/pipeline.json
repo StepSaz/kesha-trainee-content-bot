@@ -1,0 +1,38 @@
+{
+  "steps": {
+    "gatherWeb": {
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.3,
+      "max_tokens": 2048,
+      "tools": ["web_search"]
+    },
+    "selectTopics": {
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.3,
+      "max_tokens": 1024,
+      "tools": []
+    },
+    "generate": {
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.8,
+      "max_tokens": 4096,
+      "tools": ["web_search"]
+    },
+    "review": {
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.3,
+      "max_tokens": 2048,
+      "tools": []
+    },
+    "rewrite": {
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.7,
+      "max_tokens": 4096,
+      "tools": []
+    }
+  },
+  "managed": {
+    "model": "claude-sonnet-4-6"
+  },
+  "max_review_cycles": 1
+}
