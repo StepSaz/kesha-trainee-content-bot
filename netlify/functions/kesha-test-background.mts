@@ -17,31 +17,32 @@ export default async (req: Request): Promise<Response> => {
     ? process.env.TELEGRAM_CHAT_ID
     : process.env.TELEGRAM_TEST_CHAT_ID;
 
-  console.log(`[kesha-test] mode=${mode} channel=${channel} chatId=${chatId}`);
+  console.log(`[kesha-test] started mode=${mode} channel=${channel} chatId=${chatId}`);
 
-  let result;
   try {
+    let result;
     if (mode === 'managed') {
       result = await generateManagedPost();
     } else {
       result = await generatePipelinePost();
     }
+
+    if (result.success) {
+      const sendResult = await sendToChannel(result.post!, chatId);
+      console.log('[kesha-test] sent:', JSON.stringify(sendResult));
+    }
+
+    console.log('[kesha-test] result:', JSON.stringify({
+      success: result.success,
+      errors: result.errors,
+      timing: (result as { timing?: Record<string, number> }).timing,
+      postPreview: result.post?.slice(0, 200),
+    }));
   } catch (err) {
-    return new Response(
-      JSON.stringify({ success: false, error: String(err) }, null, 2),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    console.error('[kesha-test] error:', err);
   }
 
-  let sendResult = null;
-  if (result.success) {
-    sendResult = await sendToChannel(result.post!, chatId);
-  }
-
-  return new Response(
-    JSON.stringify({ ...result, sendResult }, null, 2),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
-  );
+  return new Response(null, { status: 202 });
 };
 
 export const config: Config = {};
