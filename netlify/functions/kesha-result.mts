@@ -40,14 +40,15 @@ function timingRows(timing: Record<string, number>): string {
 }
 
 function renderPage(result: StoredResult | null, secret: string): string {
-  const triggerUrl = `/.netlify/functions/kesha-test-background?secret=${secret}&mode=pipeline&channel=test`;
+  const triggerUrlTest = `/.netlify/functions/kesha-test-background?secret=${secret}&mode=pipeline&channel=test`;
+  const triggerUrlMain = `/.netlify/functions/kesha-test-background?secret=${secret}&mode=pipeline&channel=main`;
 
   let statusBadge = '<span class="badge grey">нет данных</span>';
   let sections = '';
   let timingHtml = '';
 
   if (!result) {
-    sections = '<p class="hint">Нажми «Запустить тест», подожди 1-2 минуты, обнови страницу.</p>';
+    sections = '<p class="hint">Нажми кнопку запуска, подожди 1-2 минуты, обнови страницу.</p>';
   } else if (result.status === 'running') {
     statusBadge = '<span class="badge yellow">⏳ генерирует…</span>';
     sections = `<p class="hint">Началось в ${result.startedAt ?? ''}. Страница обновится автоматически.</p>
@@ -164,6 +165,9 @@ h1{font-size:1.3rem;margin-bottom:3px}
 .btn.primary:disabled{background:#a0c4dc;cursor:not-allowed}
 .btn.secondary{background:#f1f3f4;color:#333;text-decoration:none;display:inline-flex;align-items:center}
 .btn.secondary:hover{background:#e2e5e9}
+.btn.prod{background:#e8f5e9;color:#1b5e20;border:1.5px solid #a5d6a7}
+.btn.prod:hover{background:#c8e6c9}
+.btn.prod:disabled{background:#e8f5e9;color:#aaa;border-color:#ddd;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -174,23 +178,28 @@ h1{font-size:1.3rem;margin-bottom:3px}
   ${sections}
   ${timingHtml}
   <div class="actions">
-    <button class="btn primary" id="run-btn" onclick="runTest()">▶ Запустить тест</button>
+    <button class="btn primary" id="btn-test" onclick="runKesha('test')">▶ Тест</button>
+    <button class="btn prod" id="btn-main" onclick="runKesha('main')">🚀 В прод</button>
     <a class="btn secondary" href="?secret=${secret}">↻ Обновить</a>
   </div>
 </div>
 <script>
-async function runTest() {
-  const btn = document.getElementById('run-btn');
+const URLS = { test: '${triggerUrlTest}', main: '${triggerUrlMain}' };
+async function runKesha(channel) {
+  const btn = document.getElementById('btn-' + channel);
+  const other = document.getElementById(channel === 'test' ? 'btn-main' : 'btn-test');
   btn.disabled = true;
+  other.disabled = true;
   btn.textContent = '⏳ запущено…';
   try {
-    const r = await fetch('${triggerUrl}');
-    if (r.status === 401) { btn.textContent = '❌ неверный секрет'; btn.disabled = false; return; }
+    const r = await fetch(URLS[channel]);
+    if (r.status === 401) { btn.textContent = '❌ неверный секрет'; btn.disabled = false; other.disabled = false; return; }
     btn.textContent = '✅ запущено, жди 1-2 мин';
     setTimeout(() => location.reload(), 90000);
   } catch(err) {
     btn.textContent = '❌ ошибка сети';
     btn.disabled = false;
+    other.disabled = false;
   }
 }
 </script>
