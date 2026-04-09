@@ -70,9 +70,12 @@ SKIP (low priority):
 - Narrow benchmarks without a practical "so what"
 - Technical RFCs and internal standards
 
-Normally aim for 4-5 topics. If only 3 topics qualify under the rubric, still select them but append SPARSE_WEEK on a new line at the very end of your response to signal a lean week.`;
+Normally aim for 4-5 topics. Count how many topics qualify under the rubric BEFORE deciding on SPARSE_WEEK:
+- 4 or 5 topics qualify → list them, do NOT append SPARSE_WEEK
+- Exactly 3 topics qualify → list them, then append SPARSE_WEEK on its own line at the very end
+- Never append SPARSE_WEEK if you found 4 or more qualifying topics.`;
 
-  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the rubric. For each: topic name, source, and why it's interesting for IT analysts/PMs (1-2 sentences in Russian). If only 3 topics qualify (lean week), select them and append SPARSE_WEEK at the end.`;
+  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it's interesting for IT analysts/PMs (1-2 sentences in Russian). Count your topics. If you have 4 or 5 — do not add SPARSE_WEEK. Only if exactly 3 qualify — append SPARSE_WEEK on the last line.`;
 
   return callClaude({
     systemPrompt,
@@ -166,9 +169,18 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
 
     // Step 1: Select topics
     const t1 = Date.now();
-    const selectedTopics = await selectTopics(rssContext, webContext, cfg);
+    const rawTopics = await selectTopics(rssContext, webContext, cfg);
     timing.selectTopics = Date.now() - t1;
     console.log(`[pipeline] topics selected in ${timing.selectTopics}ms`);
+
+    // Guard: strip SPARSE_WEEK if 4+ numbered topics found (LLM hallucination safeguard)
+    const topicCount = (rawTopics.match(/^\d+\./gm) ?? []).length;
+    const selectedTopics = topicCount >= 4
+      ? rawTopics.replace(/\n?SPARSE_WEEK\s*$/m, '').trim()
+      : rawTopics;
+    if (topicCount >= 4 && rawTopics.includes('SPARSE_WEEK')) {
+      console.log(`[pipeline] stripped false SPARSE_WEEK (found ${topicCount} topics)`);
+    }
 
     // Step 2: Generate
     const t2 = Date.now();
