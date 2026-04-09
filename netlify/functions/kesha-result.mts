@@ -6,6 +6,7 @@ interface StoredResult {
   startedAt?: string;
   finishedAt?: string;
   mode?: string;
+  channel?: string;
   // pipeline-specific
   rssContext?: string;
   webContext?: string;
@@ -42,6 +43,16 @@ function timingRows(timing: Record<string, number>): string {
 function renderPage(result: StoredResult | null, secret: string): string {
   const triggerUrlTest = `/.netlify/functions/kesha-test-background?secret=${secret}&mode=pipeline&channel=test`;
   const triggerUrlMain = `/.netlify/functions/kesha-test-background?secret=${secret}&mode=pipeline&channel=main`;
+
+  const testChannelBase = process.env.TELEGRAM_TEST_CHAT_LINK ?? '';
+  const mainChannelBase = process.env.TELEGRAM_CHAT_LINK ?? '';
+
+  const sentChannel = result?.channel;
+  const messageId = result?.sendResult?.success ? result.sendResult.messageId : undefined;
+  const postLinkTest = messageId && sentChannel === 'test' && testChannelBase
+    ? `${testChannelBase}/${messageId}` : testChannelBase;
+  const postLinkMain = messageId && sentChannel === 'main' && mainChannelBase
+    ? `${mainChannelBase}/${messageId}` : mainChannelBase;
 
   let statusBadge = '<span class="badge grey">нет данных</span>';
   let sections = '';
@@ -168,6 +179,9 @@ h1{font-size:1.3rem;margin-bottom:3px}
 .btn.prod{background:#e8f5e9;color:#1b5e20;border:1.5px solid #a5d6a7}
 .btn.prod:hover{background:#c8e6c9}
 .btn.prod:disabled{background:#e8f5e9;color:#aaa;border-color:#ddd;cursor:not-allowed}
+.btn.tg{background:#e3f2fd;color:#0d47a1;text-decoration:none;display:inline-flex;align-items:center}
+.btn.tg:hover{background:#bbdefb}
+.btn.tg.dim{opacity:.45;pointer-events:none}
 </style>
 </head>
 <body>
@@ -181,6 +195,10 @@ h1{font-size:1.3rem;margin-bottom:3px}
     <button class="btn primary" id="btn-test" onclick="runKesha('test')">▶ Тест</button>
     <button class="btn prod" id="btn-main" onclick="runKesha('main')">🚀 В прод</button>
     <a class="btn secondary" href="?secret=${secret}">↻ Обновить</a>
+  </div>
+  <div class="actions" style="margin-top:10px">
+    ${postLinkTest ? `<a class="btn tg${sentChannel !== 'test' || !messageId ? ' dim' : ''}" href="${postLinkTest}" target="_blank" rel="noopener">📨 Тест-канал${messageId && sentChannel === 'test' ? ' →' : ''}</a>` : ''}
+    ${postLinkMain ? `<a class="btn tg${sentChannel !== 'main' || !messageId ? ' dim' : ''}" href="${postLinkMain}" target="_blank" rel="noopener">📨 Прод-канал${messageId && sentChannel === 'main' ? ' →' : ''}</a>` : ''}
   </div>
 </div>
 <script>

@@ -35,6 +35,7 @@ export default async (req: Request): Promise<Response> => {
         status: result.success ? 'ok' : 'failed',
         finishedAt: new Date().toISOString(),
         mode,
+        channel,
         post: result.post,
         errors: result.errors,
         sendResult,
@@ -51,6 +52,7 @@ export default async (req: Request): Promise<Response> => {
         status: result.success ? 'ok' : 'failed',
         finishedAt: new Date().toISOString(),
         mode,
+        channel,
         // pipeline debug data
         rssContext: result.rssContext,
         webContext: result.webContext,
