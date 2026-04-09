@@ -106,6 +106,22 @@ describe('generatePipelinePost', () => {
     expect(result.selectedTopics).toBe('topics');
   });
 
+  it('passes SPARSE_WEEK hint to generatePost when selectTopics includes it', async () => {
+    const sparseTopics = 'Topic 1\nTopic 2\nSPARSE_WEEK';
+    mockCallClaude
+      .mockResolvedValueOnce('web context')
+      .mockResolvedValueOnce(sparseTopics)
+      .mockResolvedValueOnce(VALID_POST)
+      .mockResolvedValueOnce('хорошо');
+
+    await generatePipelinePost();
+
+    const generateCall = mockCallClaude.mock.calls[2];
+    const userMessage = generateCall[0].userMessage as string;
+    expect(userMessage).toContain('SPARSE_WEEK');
+    expect(userMessage).toContain('2 темы');
+  });
+
   it('includes timing keys for each step', async () => {
     mockCallClaude
       .mockResolvedValueOnce('web')

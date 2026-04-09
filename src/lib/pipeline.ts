@@ -95,9 +95,14 @@ async function generatePost(
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
+  const isSparseWeek = selectedTopics.includes('SPARSE_WEEK');
+  const sparseNote = isSparseWeek
+    ? '\n\nВНИМАНИЕ: эта неделя скудная - найдено только 2 темы (SPARSE_WEEK). Напиши пост на 2 темы и добавь естественную реплику от Кеши о том, что на этой неделе негусто, например: «Честно, на этой неделе негусто - нашёл только два повода написать».'
+    : '';
+
   return callClaude({
     systemPrompt: persona,
-    userMessage: `Сегодня ${date}.\n\nКонтекст из RSS:\n${rssContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
+    userMessage: `Сегодня ${date}.\n\nКонтекст из RSS:\n${rssContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
     model: cfg.steps.generate.model,
     temperature: cfg.steps.generate.temperature,
     maxTokens: cfg.steps.generate.max_tokens,
