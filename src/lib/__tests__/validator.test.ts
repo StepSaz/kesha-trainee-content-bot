@@ -16,8 +16,8 @@ describe('validatePost', () => {
     expect(validatePost(VALID_POST)).toEqual({ valid: true, errors: [] });
   });
 
-  it('fails without disclaimer keyword БОТ', () => {
-    const post = VALID_POST.replace('БОТ', 'бот');
+  it('fails without both БОТ and УЧУСЬ', () => {
+    const post = VALID_POST.replace('БОТ', 'бот').replace('УЧУСЬ', 'учусь');
     const result = validatePost(post);
     expect(result.valid).toBe(false);
     expect(result.errors.some(e => e.includes('disclaimer'))).toBe(true);
@@ -25,6 +25,11 @@ describe('validatePost', () => {
 
   it('passes with УЧУСЬ even without БОТ', () => {
     const post = `Я ТОЛЬКО УЧУСЬ. 🐤\n\nКеша на проводе🐤\n\nТест.`;
+    expect(validatePost(post).errors.some(e => e.includes('disclaimer'))).toBe(false);
+  });
+
+  it('passes with УЧУСЬ beyond first 20 chars', () => {
+    const post = `Ваш стажер на связи, Я ТОЛЬКО УЧУСЬ. 🐤\n\nКеша на проводе🐤\n\nТест.`;
     expect(validatePost(post).errors.some(e => e.includes('disclaimer'))).toBe(false);
   });
 

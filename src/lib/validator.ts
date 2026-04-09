@@ -6,9 +6,8 @@ export interface ValidationResult {
 export function validatePost(text: string): ValidationResult {
   const errors: string[] = [];
 
-  // Check for disclaimer: either uppercase БОТ anywhere, or УЧУСЬ in first 20 chars
   const hasBot = /БОТ/.test(text);
-  const hasLearning = /УЧУСЬ/.test(text.substring(0, 20)); // Check within first 20 chars
+  const hasLearning = /УЧУСЬ/.test(text);
 
   if (!hasBot && !hasLearning) {
     errors.push('Missing bot disclaimer (БОТ or УЧУСЬ in caps)');
