@@ -42,7 +42,7 @@ export async function fetchRssContext(): Promise<string> {
 
       const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
       const sorted = [...items]
-        .filter(item => !item.pubDate || new Date(item.pubDate).getTime() >= cutoff)
+        .filter(item => item.pubDate && new Date(item.pubDate).getTime() >= cutoff)
         .sort((a, b) =>
           new Date(b.pubDate ?? 0).getTime() - new Date(a.pubDate ?? 0).getTime()
         )

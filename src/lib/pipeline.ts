@@ -43,14 +43,19 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   const cutoffStr = cutoff.toISOString().slice(0, 10);
   const todayStr = now.toISOString().slice(0, 10);
 
-  return callClaude({
-    systemPrompt: 'You are a research assistant. Search the web for recent AI and tech news and return a structured summary with sources and key findings.',
-    userMessage: `Today is ${todayStr}. Search for AI and tech news published between ${cutoffStr} and ${todayStr} (last 2 weeks only). Focus on: ${queries}. Skip anything older than ${cutoffStr}. Return a structured summary of the 5-7 most interesting findings — include the publication date and source URL for each.`,
-    model: cfg.steps.gatherWeb.model,
-    temperature: cfg.steps.gatherWeb.temperature,
-    maxTokens: cfg.steps.gatherWeb.max_tokens,
-    tools: cfg.steps.gatherWeb.tools,
-  });
+  try {
+    return await callClaude({
+      systemPrompt: 'You are a research assistant. Search the web for recent AI and tech news and return a structured summary with sources and key findings.',
+      userMessage: `Today is ${todayStr}. Search for AI and tech news published between ${cutoffStr} and ${todayStr} (last 2 weeks only). Focus on: ${queries}. Skip anything older than ${cutoffStr}. Return a structured summary of the 5-7 most interesting findings — include the publication date and source URL for each.`,
+      model: cfg.steps.gatherWeb.model,
+      temperature: cfg.steps.gatherWeb.temperature,
+      maxTokens: cfg.steps.gatherWeb.max_tokens,
+      tools: cfg.steps.gatherWeb.tools,
+    });
+  } catch (err) {
+    console.warn('[pipeline] web search failed, continuing without web context:', err);
+    return '';
+  }
 }
 
 async function selectTopics(rssContext: string, webContext: string, cfg: PipelineConfig): Promise<string> {
@@ -101,6 +106,7 @@ async function generatePost(
   rssContext: string,
   webContext: string,
   selectedTopics: string,
+  topicCount: number,
   cfg: PipelineConfig
 ): Promise<string> {
   const persona = readConfig('kesha-persona.txt');
@@ -118,10 +124,11 @@ async function generatePost(
   const sparseNote = isSparseWeek
     ? '\n\nВНИМАНИЕ: эта неделя небогатая (SPARSE_WEEK) - нашлось только 3 темы вместо обычных 4-5. Напиши пост на 3 темы и добавь естественную реплику от Кеши о том, что на этой неделе маловато, например: «Честно, неделя небогатая - нашёл всего три темы, но они стоящие».'
     : '';
+  const topicNote = `\n\nВАЖНО: отобрано ровно ${topicCount} тем. Напиши ровно ${topicCount} отдельных секций — по одной на каждую тему. Не объединяй темы между собой.`;
 
   return callClaude({
     systemPrompt: persona,
-    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из RSS:\n${rssContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
+    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из RSS:\n${rssContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}${topicNote}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
     model: cfg.steps.generate.model,
     temperature: cfg.steps.generate.temperature,
     maxTokens: cfg.steps.generate.max_tokens,
@@ -163,7 +170,7 @@ async function fixPost(post: string, errors: string[], cfg: PipelineConfig): Pro
     systemPrompt: persona,
     userMessage: `Пост не прошёл проверку. Вот ошибки:\n\n${errorList}\n\nВот пост:\n\n${post}\n\nИсправь только эти проблемы. Сохрани голос и характер Кеши. Верни только исправленный пост без пояснений.`,
     model: cfg.steps.rewrite.model,
-    temperature: cfg.steps.rewrite.temperature,
+    temperature: 0.1,
     maxTokens: cfg.steps.rewrite.max_tokens,
     tools: cfg.steps.rewrite.tools,
   });
@@ -192,7 +199,7 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
     // Guard: strip SPARSE_WEEK if 4+ numbered topics found (LLM hallucination safeguard)
     const topicCount = (rawTopics.match(/^\d+\./gm) ?? []).length;
     const selectedTopics = topicCount >= 4
-      ? rawTopics.replace(/\n?SPARSE_WEEK[\s\S]*$/, '').trim()
+      ? rawTopics.replace(/\n?SPARSE_WEEK\s*$/, '').trim()
       : rawTopics;
     if (topicCount >= 4 && rawTopics.includes('SPARSE_WEEK')) {
       console.log(`[pipeline] stripped false SPARSE_WEEK (found ${topicCount} topics)`);
@@ -200,7 +207,7 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
 
     // Step 2: Generate
     const t2 = Date.now();
-    const draft = await generatePost(rssContext, webContext, selectedTopics, cfg);
+    const draft = await generatePost(rssContext, webContext, selectedTopics, topicCount, cfg);
     timing.generate = Date.now() - t2;
     console.log(`[pipeline] post generated in ${timing.generate}ms`);
 
@@ -212,7 +219,7 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
 
     // Step 4: Rewrite only if not "хорошо"
     let finalPost = draft;
-    if (!review.toLowerCase().startsWith('хорошо')) {
+    if (!review.trim().toLowerCase().startsWith('хорошо')) {
       const t4 = Date.now();
       finalPost = await rewritePost(draft, review, cfg);
       timing.rewrite = Date.now() - t4;
