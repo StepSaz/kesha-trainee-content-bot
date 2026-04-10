@@ -220,15 +220,16 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
     timing.review = Date.now() - t3;
     console.log(`[pipeline] review done in ${timing.review}ms`);
 
-    // Step 4: Rewrite only if not "хорошо"
+    // Step 4: Rewrite only on "нужна переработка"; skip for "хорошо" and "нормально"
     let finalPost = draft;
-    if (!review.trim().toLowerCase().startsWith('хорошо')) {
+    const reviewVerdict = review.trim().toLowerCase();
+    if (reviewVerdict.startsWith('нужна переработка')) {
       const t4 = Date.now();
       finalPost = await rewritePost(draft, review, cfg);
       timing.rewrite = Date.now() - t4;
       console.log(`[pipeline] rewrite done in ${timing.rewrite}ms`);
     } else {
-      console.log('[pipeline] review: хорошо — skipping rewrite');
+      console.log(`[pipeline] review: ${reviewVerdict.split('\n')[0]} — skipping rewrite`);
     }
 
     // Validate and auto-fix if needed (up to 2 attempts)
