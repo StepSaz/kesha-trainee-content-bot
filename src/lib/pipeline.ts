@@ -53,13 +53,7 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   try {
     return await callClaude({
       systemPrompt: 'You are a research assistant. Search the web for recent AI and tech news and return a structured summary with sources and key findings.',
-      userMessage: `Today is ${todayStr}. Find ONLY news published on or after ${cutoffStr}.
-
-Search for: ${queries}
-
-HARD RULE: Before including any result, check its publication date. If the date is before ${cutoffStr} — skip it entirely, do not mention it at all. If you cannot determine the publication date — skip it.
-
-Return a structured summary of 5-7 findings. For each: title, publication date (YYYY-MM-DD), and source URL.`,
+      userMessage: `Today is ${todayStr}. Search for AI and tech news from the last 2 weeks (on or after ${cutoffStr}). Search for: ${queries}. Return a structured summary of 5-7 findings — include publication date and source URL for each.`,
       model: cfg.steps.gatherWeb.model,
       temperature: cfg.steps.gatherWeb.temperature,
       maxTokens: cfg.steps.gatherWeb.max_tokens,
