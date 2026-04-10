@@ -37,17 +37,23 @@ export interface PipelineResult {
 
 async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   const sources = JSON.parse(readConfig('sources.json')) as SourcesConfig;
-  const queries = sources.search_queries.slice(0, 5).join(', ');
 
   const now = new Date();
   const cutoff = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
   const cutoffStr = cutoff.toISOString().slice(0, 10);
   const todayStr = now.toISOString().slice(0, 10);
 
+  // Append current month+year to each query so the search engine itself scopes to recent results
+  const monthYear = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const queries = sources.search_queries
+    .slice(0, 5)
+    .map(q => `${q} ${monthYear}`)
+    .join(', ');
+
   try {
     return await callClaude({
       systemPrompt: 'You are a research assistant. Search the web for recent AI and tech news and return a structured summary with sources and key findings.',
-      userMessage: `Today is ${todayStr}. Search for AI and tech news published between ${cutoffStr} and ${todayStr} (last 2 weeks only). Focus on: ${queries}. Skip anything older than ${cutoffStr}. Return a structured summary of the 5-7 most interesting findings — include the publication date and source URL for each.`,
+      userMessage: `Today is ${todayStr}. Search for AI and tech news from the last 2 weeks (on or after ${cutoffStr}). Search for: ${queries}. Return a structured summary of 5-7 findings — include publication date and source URL for each.`,
       model: cfg.steps.gatherWeb.model,
       temperature: cfg.steps.gatherWeb.temperature,
       maxTokens: cfg.steps.gatherWeb.max_tokens,
@@ -220,15 +226,16 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
     timing.review = Date.now() - t3;
     console.log(`[pipeline] review done in ${timing.review}ms`);
 
-    // Step 4: Rewrite only if not "хорошо"
+    // Step 4: Rewrite only on "нужна переработка"; skip for "хорошо" and "нормально"
     let finalPost = draft;
-    if (!review.trim().toLowerCase().startsWith('хорошо')) {
+    const reviewVerdict = review.trim().toLowerCase();
+    if (reviewVerdict.startsWith('нужна переработка')) {
       const t4 = Date.now();
       finalPost = await rewritePost(draft, review, cfg);
       timing.rewrite = Date.now() - t4;
       console.log(`[pipeline] rewrite done in ${timing.rewrite}ms`);
     } else {
-      console.log('[pipeline] review: хорошо — skipping rewrite');
+      console.log(`[pipeline] review: ${reviewVerdict.split('\n')[0]} — skipping rewrite`);
     }
 
     // Validate and auto-fix if needed (up to 2 attempts)
