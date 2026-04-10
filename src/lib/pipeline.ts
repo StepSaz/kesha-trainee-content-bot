@@ -83,9 +83,9 @@ SELECTION ALGORITHM - follow this sequence exactly:
 2. Fill up to 5 topics by adding the best Tier 2 candidates.
 3. If total is still fewer than 3, add the best available from Tier 3.
 4. If final total is exactly 3, append SPARSE_WEEK on its own line at the very end.
-5. With 4 or 5 topics, never append SPARSE_WEEK.`;
+5. Count your numbered topics. If the count is 3, append SPARSE_WEEK. If the count is 4 or 5, stop - do not append SPARSE_WEEK.`;
 
-  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed. SPARSE_WEEK only if exactly 3 topics total.`;
+  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed. SPARSE_WEEK only if exactly 3 topics total - and if so, it must be the very last word in your response with nothing after it.`;
 
   return callClaude({
     systemPrompt,
@@ -192,7 +192,7 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
     // Guard: strip SPARSE_WEEK if 4+ numbered topics found (LLM hallucination safeguard)
     const topicCount = (rawTopics.match(/^\d+\./gm) ?? []).length;
     const selectedTopics = topicCount >= 4
-      ? rawTopics.replace(/\n?SPARSE_WEEK\s*$/m, '').trim()
+      ? rawTopics.replace(/\n?SPARSE_WEEK[\s\S]*$/, '').trim()
       : rawTopics;
     if (topicCount >= 4 && rawTopics.includes('SPARSE_WEEK')) {
       console.log(`[pipeline] stripped false SPARSE_WEEK (found ${topicCount} topics)`);
