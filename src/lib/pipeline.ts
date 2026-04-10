@@ -94,6 +94,8 @@ IMPORTANT: Do not attempt to verify whether source URLs exist or are legitimate 
 
 SELECTION ALGORITHM - follow this sequence exactly:
 1. Collect all Tier 1 candidates. If Tier 1 alone exceeds 5, pick the 5 most significant.
+   When two items from the same vendor compete for a slot, use this priority order:
+   new model launch > major product launch > strategic partnership/funding > infrastructure/tooling > pricing change.
 2. Fill up to 5 topics by adding the best Tier 2 candidates.
 3. If total is still fewer than 3, add the best available from Tier 3.
 4. If final total is exactly 3, append SPARSE_WEEK on its own line at the very end.
@@ -133,7 +135,7 @@ async function generatePost(
   const sparseNote = isSparseWeek
     ? '\n\nВНИМАНИЕ: эта неделя небогатая (SPARSE_WEEK) - нашлось только 3 темы вместо обычных 4-5. Напиши пост на 3 темы и добавь естественную реплику от Кеши о том, что на этой неделе маловато, например: «Честно, неделя небогатая - нашёл всего три темы, но они стоящие».'
     : '';
-  const topicNote = `\n\nВАЖНО: отобрано ровно ${topicCount} тем. Напиши ровно ${topicCount} отдельных секций — по одной на каждую тему. Не объединяй темы между собой.`;
+  const topicNote = `\n\nВАЖНО: отобрано ровно ${topicCount} тем. Напиши ровно ${topicCount} отдельных секций — по одной на каждую тему. Не объединяй темы между собой. Лимит поста: не более 3500 символов включая вступление и вывод. Держи каждую секцию в 2-3 предложениях.`;
 
   return callClaude({
     systemPrompt: persona,
