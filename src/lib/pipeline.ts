@@ -94,8 +94,14 @@ async function generatePost(
   cfg: PipelineConfig
 ): Promise<string> {
   const persona = readConfig('kesha-persona.txt');
-  const date = new Date().toLocaleDateString('ru-RU', {
+  const now = new Date();
+  const date = now.toLocaleDateString('ru-RU', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    timeZone: 'Europe/Warsaw',
+  });
+  const time = now.toLocaleTimeString('ru-RU', {
+    hour: '2-digit', minute: '2-digit',
+    timeZone: 'Europe/Warsaw',
   });
 
   const isSparseWeek = selectedTopics.includes('SPARSE_WEEK');
@@ -105,7 +111,7 @@ async function generatePost(
 
   return callClaude({
     systemPrompt: persona,
-    userMessage: `Сегодня ${date}.\n\nКонтекст из RSS:\n${rssContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
+    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из RSS:\n${rssContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
     model: cfg.steps.generate.model,
     temperature: cfg.steps.generate.temperature,
     maxTokens: cfg.steps.generate.max_tokens,
