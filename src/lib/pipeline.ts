@@ -15,6 +15,7 @@ interface PipelineConfig {
     generate: { model: string; temperature: number; max_tokens: number; tools: string[] };
     review: { model: string; temperature: number; max_tokens: number; tools: string[] };
     rewrite: { model: string; temperature: number; max_tokens: number; tools: string[] };
+    fix: { model: string; temperature: number; max_tokens: number; tools: string[] };
   };
 }
 
@@ -171,10 +172,10 @@ async function fixPost(post: string, errors: string[], cfg: PipelineConfig): Pro
   return callClaude({
     systemPrompt: persona,
     userMessage: `Пост не прошёл проверку. Вот ошибки:\n\n${errorList}\n\nВот пост:\n\n${post}\n\nИсправь только эти проблемы. Сохрани голос и характер Кеши. Верни только исправленный пост без пояснений.`,
-    model: cfg.steps.rewrite.model,
-    temperature: 0.1,
-    maxTokens: cfg.steps.rewrite.max_tokens,
-    tools: cfg.steps.rewrite.tools,
+    model: cfg.steps.fix.model,
+    temperature: cfg.steps.fix.temperature,
+    maxTokens: cfg.steps.fix.max_tokens,
+    tools: cfg.steps.fix.tools,
   });
 }
 
