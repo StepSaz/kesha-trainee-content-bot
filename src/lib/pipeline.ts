@@ -56,26 +56,36 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
 async function selectTopics(rssContext: string, webContext: string, cfg: PipelineConfig): Promise<string> {
   const systemPrompt = `You are a content curator for a Russian-language Telegram channel about AI and tech. Audience: IT analysts, product managers, and a broad tech audience. Practical impact and ecosystem significance matter more than technical depth.
 
-INCLUDE (high priority):
-- Major product launches - new models (GPT-5, Claude 4), GA releases, major versions with user-facing changes
-- Ecosystem milestones - install/user milestones, ownership changes (MCP -> Linux Foundation), acquisitions, large partnerships
+Select topics using this tiered rubric:
+
+TIER 1 - Always include (if within 2-week window):
+Any public-facing announcement, product launch, or strategic move from the four major AI vendors: Anthropic, OpenAI, Google, Meta. If it is from one of these four and it is public, it belongs in the digest.
+
+TIER 2 - Include if there is room (fill up to 5 topics):
+- Ecosystem milestones - install/user milestones, ownership changes, acquisitions, large partnerships
 - New tools that change daily workflows for analysts, PMs, or developers
-- Strategic moves by major AI companies - funding rounds, pivots, open-sourcing, restricted previews and selective releases that signal strategic direction
+- Strategic moves by other AI companies - funding rounds, pivots, open-sourcing, restricted previews signalling direction
 - Widely discussed events - trending across tech media, HN, Twitter/X
 
-SKIP (low priority):
-- ML research without direct user impact - KV-cache optimizations, quantization methods, architectural improvements
+TIER 3 - Only if total is fewer than 3:
+- Developer frameworks, SDKs, open-source libraries
+- Technical releases without direct end-user product impact
+
+SKIP - Never include:
 - Arxiv preprints and academic papers, even from major labs
 - Minor version bumps, patches, changelogs
 - Narrow benchmarks without a practical "so what"
 - Technical RFCs and internal standards
+- ML research without direct user impact (KV-cache optimizations, quantization methods, architectural improvements)
 
-Normally aim for 4-5 topics. Count how many topics qualify under the rubric BEFORE deciding on SPARSE_WEEK:
-- 4 or 5 topics qualify → list them, do NOT append SPARSE_WEEK
-- Exactly 3 topics qualify → list them, then append SPARSE_WEEK on its own line at the very end
-- Never append SPARSE_WEEK if you found 4 or more qualifying topics.`;
+SELECTION ALGORITHM - follow this sequence exactly:
+1. Collect all Tier 1 candidates. If Tier 1 alone exceeds 5, pick the 5 most significant.
+2. Fill up to 5 topics by adding the best Tier 2 candidates.
+3. If total is still fewer than 3, add the best available from Tier 3.
+4. If final total is exactly 3, append SPARSE_WEEK on its own line at the very end.
+5. With 4 or 5 topics, never append SPARSE_WEEK.`;
 
-  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it's interesting for IT analysts/PMs (1-2 sentences in Russian). Count your topics. If you have 4 or 5 — do not add SPARSE_WEEK. Only if exactly 3 qualify — append SPARSE_WEEK on the last line.`;
+  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed. SPARSE_WEEK only if exactly 3 topics total.`;
 
   return callClaude({
     systemPrompt,
