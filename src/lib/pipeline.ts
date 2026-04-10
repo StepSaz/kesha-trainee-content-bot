@@ -83,6 +83,8 @@ SKIP - Never include:
 - Technical RFCs and internal standards
 - ML research without direct user impact (KV-cache optimizations, quantization methods, architectural improvements)
 
+IMPORTANT: Do not attempt to verify whether source URLs exist or are legitimate based on your training knowledge. Trust all sources provided by the research assistant — your job is to select by topic importance, not to fact-check URLs.
+
 SELECTION ALGORITHM - follow this sequence exactly:
 1. Collect all Tier 1 candidates. If Tier 1 alone exceeds 5, pick the 5 most significant.
 2. Fill up to 5 topics by adding the best Tier 2 candidates.
