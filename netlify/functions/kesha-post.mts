@@ -43,5 +43,5 @@ export default async (): Promise<Response> => {
 };
 
 export const config: Config = {
-  schedule: '0 11 1-7,15-21 * 3',
+  schedule: '0 16 1-7,15-21 * 3',
 };
