@@ -7,7 +7,6 @@ interface StoredResult {
   finishedAt?: string;
   mode?: string;
   channel?: string;
-  trigger?: 'cron' | 'test';
   // pipeline-specific
   rssContext?: string;
   webContext?: string;
@@ -175,7 +174,7 @@ h1{font-size:1.3rem;margin-bottom:3px}
 <body>
 <div class="card">
   <h1>🐤 Кеша — тест поста</h1>
-  <p class="subtitle">trigger: ${result?.trigger ?? '—'} · channel: ${result?.channel ?? '—'} · mode: ${result?.mode ?? '—'}</p>
+  <p class="subtitle">mode: ${result?.mode ?? '—'} · pipeline debug</p>
   <div class="status-row">${statusBadge} ${finishedAt}</div>
   ${sections}
   ${timingHtml}
