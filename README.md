@@ -75,10 +75,7 @@ Copy the printed IDs to Netlify env vars:
 
 ## Schedule
 
-Cron: `0 16 * * 3` — every Wednesday at 16:00 UTC (18:00 Warsaw). A day-of-month
-gate inside `kesha-post.mts` limits actual runs to the 1st and 3rd Wednesday of
-the month (bi-weekly). Pure cron can't AND day-of-month with day-of-week, so the
-gate has to live in code.
+Cron: `0 11 1-7,15-21 * 3` — 1st and 3rd Wednesday of month, 12:00 CET.
 
 To skip a week: set `KESHA_ENABLED=false` in Netlify env vars.
 

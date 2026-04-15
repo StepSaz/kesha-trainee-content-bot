@@ -9,21 +9,6 @@ export default async (): Promise<Response> => {
     return new Response('skipped', { status: 200 });
   }
 
-  // Cron fires every Wednesday, but we only want 1st and 3rd Wednesday of the
-  // month (bi-weekly). Pure cron can't express "AND" between day-of-month and
-  // day-of-week, so we gate in code: day-of-month must be in 1-7 (1st Wed) or
-  // 15-21 (3rd Wed). Uses UTC to match the cron schedule timezone.
-  const dayOfMonth = new Date().getUTCDate();
-  const isFirstOrThirdWeek =
-    (dayOfMonth >= 1 && dayOfMonth <= 7) ||
-    (dayOfMonth >= 15 && dayOfMonth <= 21);
-  if (!isFirstOrThirdWeek) {
-    console.log(
-      `[kesha-post] day-of-month=${dayOfMonth} not in 1-7 or 15-21 — skipping (bi-weekly gate)`,
-    );
-    return new Response('skipped', { status: 200 });
-  }
-
   const mode = process.env.KESHA_MODE ?? 'pipeline';
   console.log(`[kesha-post] mode=${mode}`);
 
@@ -58,8 +43,5 @@ export default async (): Promise<Response> => {
 };
 
 export const config: Config = {
-  // Every Wednesday at 16:00 UTC (18:00 Warsaw). Bi-weekly cadence is enforced
-  // by the day-of-month gate above — cron OR-semantics make `1-7,15-21 * 3`
-  // fire ~17x/month instead of the intended 2x.
-  schedule: '0 16 * * 3',
+  schedule: '0 16 1-7,15-21 * 3',
 };
