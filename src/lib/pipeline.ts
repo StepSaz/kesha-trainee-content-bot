@@ -39,7 +39,7 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   const sources = JSON.parse(readConfig('sources.json')) as SourcesConfig;
 
   const now = new Date();
-  const cutoff = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  const cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const cutoffStr = cutoff.toISOString().slice(0, 10);
   const todayStr = now.toISOString().slice(0, 10);
 
