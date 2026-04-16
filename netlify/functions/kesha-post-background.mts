@@ -1,6 +1,6 @@
 import type { Config } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
-import { generatePipelinePost } from '../../src/lib/pipeline.js';
+import { generatePipelinePost, extractIntro, type PipelineOptions } from '../../src/lib/pipeline.js';
 import { generateManagedPost } from '../../src/lib/managed-agent.js';
 import { sendToChannel } from '../../src/lib/telegram.js';
 
@@ -28,10 +28,14 @@ export default async (): Promise<Response> => {
     channel: cronChannel,
   });
 
+  const publishedTopics = (await store.get('published-topics', { type: 'json' }) as string[] | null) ?? [];
+  const previousIntros = (await store.get('previous-intros', { type: 'json' }) as string[] | null) ?? [];
+  const pipelineOptions: PipelineOptions = { publishedTopics, previousIntros };
+
   try {
     async function run() {
       if (mode === 'managed') return generateManagedPost();
-      return generatePipelinePost();
+      return generatePipelinePost(pipelineOptions);
     }
 
     let result = await run();
@@ -97,6 +101,14 @@ export default async (): Promise<Response> => {
     });
 
     console.log(`[kesha-post] posted! messageId=${sendResult.messageId}`);
+
+    const newTopics = [...publishedTopics, result.selectedTopics].slice(-4);
+    await store.setJSON('published-topics', newTopics);
+
+    const newIntro = extractIntro(result.post!);
+    const newIntros = [...previousIntros, newIntro].slice(-10);
+    await store.setJSON('previous-intros', newIntros);
+
     return new Response('ok', { status: 200 });
   } catch (err) {
     console.error('[kesha-post] unexpected error:', err);
