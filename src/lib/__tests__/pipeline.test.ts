@@ -4,7 +4,7 @@ vi.mock('../claude.js', () => ({ callClaude: vi.fn() }));
 vi.mock('../rss.js', () => ({ fetchRssContext: vi.fn() }));
 vi.mock('../validator.js', () => ({ validatePost: vi.fn() }));
 
-import { generatePipelinePost } from '../pipeline.js';
+import { generatePipelinePost, extractIntro } from '../pipeline.js';
 import { callClaude } from '../claude.js';
 import { fetchRssContext } from '../rss.js';
 import { validatePost } from '../validator.js';
@@ -151,5 +151,101 @@ describe('generatePipelinePost', () => {
     expect(result.timing).toHaveProperty('selectTopics');
     expect(result.timing).toHaveProperty('generate');
     expect(result.timing).toHaveProperty('review');
+  });
+});
+
+describe('generatePipelinePost with publishedTopics', () => {
+  it('injects dedup block into selectTopics system prompt when publishedTopics provided', async () => {
+    mockCallClaude
+      .mockResolvedValueOnce('web context')
+      .mockResolvedValueOnce('1. Topic A\n2. Topic B\n3. Topic C')
+      .mockResolvedValueOnce(VALID_POST)
+      .mockResolvedValueOnce('хорошо');
+
+    await generatePipelinePost({
+      publishedTopics: ['1. OldTopic X (Anthropic)', '1. OldTopic Y (OpenAI)'],
+    });
+
+    const selectCall = mockCallClaude.mock.calls[1];
+    expect(selectCall[0].systemPrompt).toContain('OldTopic X');
+    expect(selectCall[0].systemPrompt).toContain('НЕ повторяй');
+  });
+
+  it('does not add dedup block when publishedTopics is empty array', async () => {
+    mockCallClaude
+      .mockResolvedValueOnce('web context')
+      .mockResolvedValueOnce('1. Topic A\n2. Topic B\n3. Topic C')
+      .mockResolvedValueOnce(VALID_POST)
+      .mockResolvedValueOnce('хорошо');
+
+    await generatePipelinePost({ publishedTopics: [] });
+
+    const selectCall = mockCallClaude.mock.calls[1];
+    expect(selectCall[0].systemPrompt).not.toContain('НЕ повторяй');
+  });
+
+  it('does not add dedup block when no options provided', async () => {
+    mockCallClaude
+      .mockResolvedValueOnce('web context')
+      .mockResolvedValueOnce('1. Topic A')
+      .mockResolvedValueOnce(VALID_POST)
+      .mockResolvedValueOnce('хорошо');
+
+    await generatePipelinePost();
+
+    const selectCall = mockCallClaude.mock.calls[1];
+    expect(selectCall[0].systemPrompt).not.toContain('НЕ повторяй');
+  });
+});
+
+describe('generatePipelinePost with previousIntros', () => {
+  it('injects intros block into generatePost user message when previousIntros provided', async () => {
+    mockCallClaude
+      .mockResolvedValueOnce('web context')
+      .mockResolvedValueOnce('1. Topic A\n2. Topic B\n3. Topic C')
+      .mockResolvedValueOnce(VALID_POST)
+      .mockResolvedValueOnce('хорошо');
+
+    await generatePipelinePost({
+      previousIntros: ['Четверг, прогрелся, завис на HN.', 'Пятница, читал RSS.'],
+    });
+
+    const generateCall = mockCallClaude.mock.calls[2];
+    expect(generateCall[0].userMessage).toContain('Четверг, прогрелся');
+    expect(generateCall[0].userMessage).toContain('НЕ повторяй');
+  });
+
+  it('does not add intros block when previousIntros is empty', async () => {
+    mockCallClaude
+      .mockResolvedValueOnce('web context')
+      .mockResolvedValueOnce('1. Topic A')
+      .mockResolvedValueOnce(VALID_POST)
+      .mockResolvedValueOnce('хорошо');
+
+    await generatePipelinePost({ previousIntros: [] });
+
+    const generateCall = mockCallClaude.mock.calls[2];
+    expect(generateCall[0].userMessage).not.toContain('НЕ повторяй');
+  });
+});
+
+describe('extractIntro', () => {
+  it('returns text before first ~ ~ ~ separator, trimmed', () => {
+    const post = 'Кеша на проводе.\n\nПривет, это интро.\n\n~ ~ ~\n\nСекция 1.';
+    expect(extractIntro(post)).toBe('Кеша на проводе.\n\nПривет, это интро.');
+  });
+
+  it('returns first 500 chars when no separator present', () => {
+    const post = 'a'.repeat(600);
+    expect(extractIntro(post)).toBe('a'.repeat(500));
+  });
+
+  it('returns empty string when post is empty', () => {
+    expect(extractIntro('')).toBe('');
+  });
+
+  it('handles post shorter than 500 chars with no separator', () => {
+    const post = 'short post without separator';
+    expect(extractIntro(post)).toBe('short post without separator');
   });
 });

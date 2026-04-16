@@ -35,6 +35,16 @@ export interface PipelineResult {
   timing: Record<string, number>;
 }
 
+export interface PipelineOptions {
+  publishedTopics?: string[];  // selectedTopics strings from last 4 successful posts
+  previousIntros?: string[];   // extracted intro strings from last 10 posts
+}
+
+export function extractIntro(post: string): string {
+  const sep = post.indexOf('~ ~ ~');
+  return (sep === -1 ? post.slice(0, 500) : post.slice(0, sep)).trim();
+}
+
 async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   const sources = JSON.parse(readConfig('sources.json')) as SourcesConfig;
 
@@ -65,7 +75,7 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   }
 }
 
-async function selectTopics(rssContext: string, webContext: string, cfg: PipelineConfig): Promise<string> {
+async function selectTopics(rssContext: string, webContext: string, cfg: PipelineConfig, publishedTopics?: string[]): Promise<string> {
   const systemPrompt = `You are a content curator for a Russian-language Telegram channel about AI and tech. Audience: IT analysts, product managers, and a broad tech audience. Practical impact and ecosystem significance matter more than technical depth.
 
 Select topics using this tiered rubric:
@@ -103,8 +113,17 @@ SELECTION ALGORITHM - follow this sequence exactly:
 
   const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed. SPARSE_WEEK only if exactly 3 topics total - and if so, it must be the very last word in your response with nothing after it.`;
 
+  const dedupBlock = publishedTopics && publishedTopics.length > 0
+    ? `\n\nТЕМЫ ИЗ ПОСЛЕДНИХ ПОСТОВ (НЕ повторяй эти же события - даже если они снова в фиде):\n${
+        publishedTopics
+          .slice(-4)
+          .map((t, i) => `--- Пост -${publishedTopics!.slice(-4).length - i} ---\n${t}`)
+          .join('\n')
+      }\n\nПравила анти-дублирования:\n- Если новость о ТОМ ЖЕ событии (тот же продукт, тот же релиз, та же сделка) - пропусти.\n- Если есть ЗНАЧИМОЕ продолжение (новые цифры, реакция рынка, отозвали/расширили) - можно включить, но обозначь как развитие, не как анонс.\n- Если нет нового угла - пропусти, даже если событие крупное.`
+    : '';
+
   return callClaude({
-    systemPrompt,
+    systemPrompt: systemPrompt + dedupBlock,
     userMessage,
     model: cfg.steps.selectTopics.model,
     temperature: cfg.steps.selectTopics.temperature,
@@ -118,7 +137,8 @@ async function generatePost(
   webContext: string,
   selectedTopics: string,
   topicCount: number,
-  cfg: PipelineConfig
+  cfg: PipelineConfig,
+  previousIntros?: string[]
 ): Promise<string> {
   const persona = readConfig('kesha-persona.txt');
   const now = new Date();
@@ -137,9 +157,15 @@ async function generatePost(
     : '';
   const topicNote = `\n\nВАЖНО: отобрано ровно ${topicCount} тем. Напиши ровно ${topicCount} отдельных секций — по одной на каждую тему. Не объединяй темы между собой. Лимит поста: не более 3500 символов включая вступление и вывод. Держи каждую секцию в 2-3 предложениях.`;
 
+  const introsBlock = previousIntros && previousIntros.length > 0
+    ? `\n\nПОСЛЕДНИЕ ${Math.min(3, previousIntros.length)} ТВОИХ ИНТРО (НЕ повторяй ни словарь, ни структуру - пиши по-другому каждый раз):\n${
+        previousIntros.slice(-3).join('\n---\n')
+      }`
+    : '';
+
   return callClaude({
     systemPrompt: persona,
-    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из RSS:\n${rssContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}${topicNote}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
+    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из RSS:\n${rssContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}${topicNote}${introsBlock}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
     model: cfg.steps.generate.model,
     temperature: cfg.steps.generate.temperature,
     maxTokens: cfg.steps.generate.max_tokens,
@@ -187,7 +213,7 @@ async function fixPost(post: string, errors: string[], cfg: PipelineConfig): Pro
   });
 }
 
-export async function generatePipelinePost(): Promise<PipelineResult> {
+export async function generatePipelinePost(options: PipelineOptions = {}): Promise<PipelineResult> {
   const cfg = JSON.parse(readConfig('pipeline.json')) as PipelineConfig;
   const timing: Record<string, number> = {};
 
@@ -203,7 +229,7 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
 
     // Step 1: Select topics
     const t1 = Date.now();
-    const rawTopics = await selectTopics(rssContext, webContext, cfg);
+    const rawTopics = await selectTopics(rssContext, webContext, cfg, options.publishedTopics);
     timing.selectTopics = Date.now() - t1;
     console.log(`[pipeline] topics selected in ${timing.selectTopics}ms`);
 
@@ -218,7 +244,7 @@ export async function generatePipelinePost(): Promise<PipelineResult> {
 
     // Step 2: Generate
     const t2 = Date.now();
-    const draft = await generatePost(rssContext, webContext, selectedTopics, topicCount, cfg);
+    const draft = await generatePost(rssContext, webContext, selectedTopics, topicCount, cfg, options.previousIntros);
     timing.generate = Date.now() - t2;
     console.log(`[pipeline] post generated in ${timing.generate}ms`);
 
