@@ -248,4 +248,8 @@ describe('extractIntro', () => {
     const post = 'short post without separator';
     expect(extractIntro(post)).toBe('short post without separator');
   });
+
+  it('returns empty string when separator is at position 0', () => {
+    expect(extractIntro('~ ~ ~\n\nRest of post')).toBe('');
+  });
 });

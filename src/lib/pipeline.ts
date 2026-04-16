@@ -113,12 +113,10 @@ SELECTION ALGORITHM - follow this sequence exactly:
 
   const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed. SPARSE_WEEK only if exactly 3 topics total - and if so, it must be the very last word in your response with nothing after it.`;
 
-  const dedupBlock = publishedTopics && publishedTopics.length > 0
+  const sliced = publishedTopics ? publishedTopics.slice(-4) : [];
+  const dedupBlock = sliced.length > 0
     ? `\n\nТЕМЫ ИЗ ПОСЛЕДНИХ ПОСТОВ (НЕ повторяй эти же события - даже если они снова в фиде):\n${
-        publishedTopics
-          .slice(-4)
-          .map((t, i) => `--- Пост -${publishedTopics!.slice(-4).length - i} ---\n${t}`)
-          .join('\n')
+        sliced.map((t, i) => `--- Пост -${sliced.length - i} ---\n${t}`).join('\n')
       }\n\nПравила анти-дублирования:\n- Если новость о ТОМ ЖЕ событии (тот же продукт, тот же релиз, та же сделка) - пропусти.\n- Если есть ЗНАЧИМОЕ продолжение (новые цифры, реакция рынка, отозвали/расширили) - можно включить, но обозначь как развитие, не как анонс.\n- Если нет нового угла - пропусти, даже если событие крупное.`
     : '';
 
