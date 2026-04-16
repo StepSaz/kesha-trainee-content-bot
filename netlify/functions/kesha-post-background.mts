@@ -102,8 +102,9 @@ export default async (): Promise<Response> => {
 
     console.log(`[kesha-post] posted! messageId=${sendResult.messageId}`);
 
-    if ('selectedTopics' in result) {
-      const newTopics = [...publishedTopics, result.selectedTopics].slice(-4);
+    if (mode !== 'managed') {
+      const pipelineResult = result as PipelineResult;
+      const newTopics = [...publishedTopics, pipelineResult.selectedTopics].slice(-4);
       await store.setJSON('published-topics', newTopics);
 
       const newIntro = extractIntro(result.post!);
