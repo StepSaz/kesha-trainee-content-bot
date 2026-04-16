@@ -102,12 +102,14 @@ export default async (): Promise<Response> => {
 
     console.log(`[kesha-post] posted! messageId=${sendResult.messageId}`);
 
-    const newTopics = [...publishedTopics, result.selectedTopics].slice(-4);
-    await store.setJSON('published-topics', newTopics);
+    if ('selectedTopics' in result) {
+      const newTopics = [...publishedTopics, result.selectedTopics].slice(-4);
+      await store.setJSON('published-topics', newTopics);
 
-    const newIntro = extractIntro(result.post!);
-    const newIntros = [...previousIntros, newIntro].slice(-10);
-    await store.setJSON('previous-intros', newIntros);
+      const newIntro = extractIntro(result.post!);
+      const newIntros = [...previousIntros, newIntro].slice(-10);
+      await store.setJSON('previous-intros', newIntros);
+    }
 
     return new Response('ok', { status: 200 });
   } catch (err) {
