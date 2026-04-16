@@ -9,13 +9,13 @@ const SAMPLE_XML = `<?xml version="1.0" encoding="UTF-8"?>
       <title>Claude gets smarter</title>
       <link>https://anthropic.com/news/claude-update</link>
       <description><![CDATA[<p>Anthropic released Claude 4 with major improvements.</p>]]></description>
-      <pubDate>Wed, 09 Apr 2026 10:00:00 GMT</pubDate>
+      <pubDate>Wed, 15 Apr 2026 10:00:00 GMT</pubDate>
     </item>
     <item>
       <title>New AI coding tool</title>
       <link>https://example.com/tool</link>
       <description>A new tool for developers.</description>
-      <pubDate>Tue, 08 Apr 2026 09:00:00 GMT</pubDate>
+      <pubDate>Tue, 14 Apr 2026 09:00:00 GMT</pubDate>
     </item>
   </channel>
 </rss>`;
