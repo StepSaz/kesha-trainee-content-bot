@@ -53,7 +53,7 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   try {
     return await callClaude({
       systemPrompt: 'You are a research assistant. Search the web for recent AI and tech news and return a structured summary with sources and key findings.',
-      userMessage: `Today is ${todayStr}. Search for AI and tech news from the last 2 weeks (on or after ${cutoffStr}). Search for: ${queries}. Return a structured summary of 5-7 findings — include publication date and source URL for each.`,
+      userMessage: `Today is ${todayStr}. Search for AI and tech news from the last 7 days (on or after ${cutoffStr}). Search for: ${queries}. Return a structured summary of 5-7 findings — include publication date and source URL for each.`,
       model: cfg.steps.gatherWeb.model,
       temperature: cfg.steps.gatherWeb.temperature,
       maxTokens: cfg.steps.gatherWeb.max_tokens,
@@ -70,7 +70,7 @@ async function selectTopics(rssContext: string, webContext: string, cfg: Pipelin
 
 Select topics using this tiered rubric:
 
-TIER 1 - Always include (if within 2-week window):
+TIER 1 - Always include (if within 7-day window):
 Any public-facing announcement, product launch, or strategic move from the four major AI vendors: Anthropic, OpenAI, Google, Meta. If it is from one of these four and it is public, it belongs in the digest.
 
 TIER 2 - Include if there is room (fill up to 5 topics):
