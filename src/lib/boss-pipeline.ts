@@ -41,6 +41,11 @@ export interface BossPipelineResult {
   error?: string;
 }
 
+function extractJson(raw: string): string {
+  const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  return match ? match[1].trim() : raw.trim();
+}
+
 async function runReview(text: string, cfg: BossModelConfig): Promise<BossReviewOutput> {
   const systemPrompt = readConfig('boss-review.txt');
 
@@ -52,7 +57,7 @@ async function runReview(text: string, cfg: BossModelConfig): Promise<BossReview
       temperature: cfg.temperature,
       maxTokens: cfg.max_tokens,
     });
-    return JSON.parse(raw) as BossReviewOutput;
+    return JSON.parse(extractJson(raw)) as BossReviewOutput;
   }
 
   try {
