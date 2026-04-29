@@ -25,4 +25,16 @@ describe('parseCommand', () => {
   it('trims extra whitespace from inputText', () => {
     expect(parseCommand('/boss   много пробелов   ').inputText).toBe('много пробелов');
   });
+
+  it('handles --raw with no following text', () => {
+    expect(parseCommand('/boss --raw')).toEqual({ forceRaw: true, forceSkip: false, inputText: '' });
+  });
+
+  it('handles --skip with no following text', () => {
+    expect(parseCommand('/boss --skip')).toEqual({ forceRaw: false, forceSkip: true, inputText: '' });
+  });
+
+  it('returns empty inputText for bare /boss command', () => {
+    expect(parseCommand('/boss')).toEqual({ forceRaw: false, forceSkip: false, inputText: '' });
+  });
 });

@@ -145,10 +145,16 @@ async function handleCommand(message: TelegramMessage): Promise<void> {
       { replyMarkup: keyboard }
     );
 
+    if (!previewMsg.success || !previewMsg.messageId) {
+      console.error('[boss] failed to send preview message:', previewMsg.error);
+      await editMessageText(chatId, progressMessageId, '❌ Не удалось отправить превью.');
+      return;
+    }
+
     const pending: PendingPreview = {
       userId,
       chatId,
-      previewMessageId: previewMsg.messageId ?? 0,
+      previewMessageId: previewMsg.messageId,
       finalText: result.finalText,
       channelId,
       createdAt: new Date().toISOString(),
