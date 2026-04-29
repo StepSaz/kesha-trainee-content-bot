@@ -220,10 +220,11 @@ export default async (req: Request): Promise<Response> => {
 
   console.log('[boss] update received:', JSON.stringify(update));
 
+  // Fire and forget — return 202 immediately so Telegram doesn't time out
   if (update.message?.text?.match(/^\/boss/)) {
-    await handleCommand(update.message);
+    void handleCommand(update.message);
   } else if (update.callback_query) {
-    await handleCallback(update.callback_query);
+    void handleCallback(update.callback_query);
   }
 
   return new Response(null, { status: 202 });
