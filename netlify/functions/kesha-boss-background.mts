@@ -226,11 +226,12 @@ export default async (req: Request): Promise<Response> => {
 
   console.log('[boss] update received:', JSON.stringify(update));
 
-  // Fire and forget — return 202 immediately so Telegram doesn't time out
+  // Netlify background functions return 202 to caller automatically at infrastructure level.
+  // We await here so the function keeps running until handlers complete (up to 15 min).
   if (update.message?.text?.match(/^\/boss/)) {
-    void handleCommand(update.message);
+    await handleCommand(update.message);
   } else if (update.callback_query) {
-    void handleCallback(update.callback_query);
+    await handleCallback(update.callback_query);
   }
 
   return new Response(null, { status: 202 });
