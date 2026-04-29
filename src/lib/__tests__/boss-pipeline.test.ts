@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../claude.js', () => ({ callClaude: vi.fn() }));
 vi.mock('../validator.js', () => ({
-  validatePost: vi.fn(),
   validateBossPost: vi.fn(),
 }));
 

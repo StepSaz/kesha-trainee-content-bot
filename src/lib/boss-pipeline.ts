@@ -95,7 +95,19 @@ export async function runBossPipeline(
   options: BossPipelineOptions,
   onProgress?: (status: string) => Promise<void>
 ): Promise<BossPipelineResult> {
-  const pipelineConfig = JSON.parse(readConfig('pipeline.json')) as { boss_command: BossCommandConfig };
+  let pipelineConfig: { boss_command: BossCommandConfig };
+  try {
+    pipelineConfig = JSON.parse(readConfig('pipeline.json')) as { boss_command: BossCommandConfig };
+  } catch (err) {
+    return {
+      success: false,
+      branch: 'READY',
+      finalText: '',
+      reviewOutput: { verdict: 'READY', verdict_reason: '', corrected_text: '', grammar_notes: '' },
+      rewriteOutput: null,
+      error: `Config load failed: ${String(err)}`,
+    };
+  }
   const cfg = pipelineConfig.boss_command;
 
   console.log(`[boss-pipeline] start length=${text.length} forceRaw=${options.forceRaw ?? false} forceSkip=${options.forceSkip ?? false}`);
