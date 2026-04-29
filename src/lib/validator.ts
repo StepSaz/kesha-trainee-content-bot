@@ -40,3 +40,21 @@ export function validatePost(text: string): ValidationResult {
 
   return { valid: errors.length === 0, errors };
 }
+
+export function validateBossPost(text: string): ValidationResult {
+  const errors: string[] = [];
+
+  if (text.length > 4096) {
+    errors.push(`Post too long: ${text.length} chars (max 4096)`);
+  }
+
+  if (text.includes('\u2014')) {
+    errors.push('Contains em-dash (—), use hyphen instead');
+  }
+
+  if (/\*\*|##|```/.test(text)) {
+    errors.push('Contains markdown formatting (**, ##, ```)');
+  }
+
+  return { valid: errors.length === 0, errors };
+}

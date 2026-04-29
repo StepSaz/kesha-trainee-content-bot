@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validatePost } from '../validator.js';
+import { validatePost, validateBossPost } from '../validator.js';
 
 const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Не бейте. 🐤
 
@@ -107,5 +107,58 @@ describe('validatePost', () => {
   it('collects multiple errors', () => {
     const result = validatePost('short invalid post');
     expect(result.errors.length).toBeGreaterThan(1);
+  });
+});
+
+describe('validateBossPost', () => {
+  it('passes a clean post', () => {
+    const text = 'Это обычный пост без проблем. Вполне нормальный текст. 🐤';
+    expect(validateBossPost(text)).toEqual({ valid: true, errors: [] });
+  });
+
+  it('fails when post exceeds 4096 characters', () => {
+    const text = 'a'.repeat(4097);
+    const result = validateBossPost(text);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('4097') && e.includes('4096'))).toBe(true);
+  });
+
+  it('passes a post of exactly 4096 characters', () => {
+    const text = 'a'.repeat(4096);
+    expect(validateBossPost(text).valid).toBe(true);
+  });
+
+  it('fails with em-dash', () => {
+    const text = 'Текст\u2014с длинным тире';
+    const result = validateBossPost(text);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('em-dash'))).toBe(true);
+  });
+
+  it('fails with markdown bold', () => {
+    const text = 'Текст с **bold** словом';
+    const result = validateBossPost(text);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('markdown'))).toBe(true);
+  });
+
+  it('fails with markdown heading', () => {
+    const text = 'Текст\n## Заголовок\nТекст';
+    const result = validateBossPost(text);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('markdown'))).toBe(true);
+  });
+
+  it('fails with code block', () => {
+    const text = 'Текст\n```код```\nТекст';
+    const result = validateBossPost(text);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('markdown'))).toBe(true);
+  });
+
+  it('collects multiple errors', () => {
+    const text = 'x\u2014y **bold**';
+    const result = validateBossPost(text);
+    expect(result.errors.length).toBeGreaterThanOrEqual(2);
   });
 });
