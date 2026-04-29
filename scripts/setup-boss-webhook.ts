@@ -49,10 +49,14 @@ async function main() {
 
   // 3. Verify webhook info
   const infoRes = await fetch(`${apiBase}/getWebhookInfo`);
-  const info = await infoRes.json() as { result: { url: string; has_custom_certificate: boolean; pending_update_count: number } };
+  const infoData = await infoRes.json() as { ok: boolean; result?: { url: string; pending_update_count: number }; description?: string };
+  if (!infoData.ok || !infoData.result) {
+    console.error('getWebhookInfo failed:', infoData.description);
+    process.exit(1);
+  }
   console.log('\n=== Webhook Info ===');
-  console.log(`URL: ${info.result.url}`);
-  console.log(`Pending updates: ${info.result.pending_update_count}`);
+  console.log(`URL: ${infoData.result.url}`);
+  console.log(`Pending updates: ${infoData.result.pending_update_count}`);
   console.log('===================\n');
 }
 
