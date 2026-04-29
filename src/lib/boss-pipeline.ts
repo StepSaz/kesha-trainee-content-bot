@@ -42,8 +42,11 @@ export interface BossPipelineResult {
 }
 
 function extractJson(raw: string): string {
-  const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  return match ? match[1].trim() : raw.trim();
+  const trimmed = raw.trim();
+  const lines = trimmed.split('\n');
+  const start = lines[0].trim().startsWith('```') ? 1 : 0;
+  const end = lines[lines.length - 1].trim() === '```' ? lines.length - 1 : lines.length;
+  return lines.slice(start, end).join('\n').trim();
 }
 
 async function runReview(text: string, cfg: BossModelConfig): Promise<BossReviewOutput> {
