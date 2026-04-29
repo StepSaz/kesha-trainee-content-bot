@@ -94,25 +94,41 @@ export async function editMessageText(
     body.reply_markup = options.replyMarkup;
   }
 
-  await fetch(
-    `https://api.telegram.org/bot${token}/editMessageText`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${token}/editMessageText`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }
+    );
+    const data = await response.json() as { ok: boolean; description?: string };
+    if (!data.ok) {
+      console.error(`[telegram] editMessageText failed: ${data.description}`);
     }
-  );
+  } catch (err) {
+    console.error(`[telegram] editMessageText error: ${String(err)}`);
+  }
 }
 
 export async function answerCallbackQuery(callbackQueryId: string): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN!;
 
-  await fetch(
-    `https://api.telegram.org/bot${token}/answerCallbackQuery`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callback_query_id: callbackQueryId }),
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${token}/answerCallbackQuery`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: callbackQueryId }),
+      }
+    );
+    const data = await response.json() as { ok: boolean; description?: string };
+    if (!data.ok) {
+      console.error(`[telegram] answerCallbackQuery failed: ${data.description}`);
     }
-  );
+  } catch (err) {
+    console.error(`[telegram] answerCallbackQuery error: ${String(err)}`);
+  }
 }
