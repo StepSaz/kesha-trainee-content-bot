@@ -61,7 +61,7 @@ export default async (): Promise<Response> => {
         review: result.review,
         selectedTopics: result.selectedTopics,
         webContext: result.webContext,
-        rssContext: result.rssContext,
+        hnContext: result.hnContext,
       });
       return new Response('failed', { status: 500 });
     }
@@ -89,7 +89,7 @@ export default async (): Promise<Response> => {
       trigger: 'cron',
       mode,
       channel: cronChannel,
-      rssContext: result.rssContext,
+      hnContext: result.hnContext,
       webContext: result.webContext,
       selectedTopics: result.selectedTopics,
       draft: result.draft,

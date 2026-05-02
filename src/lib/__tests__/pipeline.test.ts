@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../claude.js', () => ({ callClaude: vi.fn() }));
-vi.mock('../rss.js', () => ({ fetchRssContext: vi.fn() }));
+vi.mock('../hackernews.js', () => ({ fetchHackerNewsContext: vi.fn() }));
 vi.mock('../validator.js', () => ({ validatePost: vi.fn() }));
 
 import { generatePipelinePost, extractIntro } from '../pipeline.js';
 import { callClaude } from '../claude.js';
-import { fetchRssContext } from '../rss.js';
+import { fetchHackerNewsContext } from '../hackernews.js';
 import { validatePost } from '../validator.js';
 
 const mockCallClaude = vi.mocked(callClaude);
-const mockFetchRssContext = vi.mocked(fetchRssContext);
+const mockFetchHackerNewsContext = vi.mocked(fetchHackerNewsContext);
 const mockValidatePost = vi.mocked(validatePost);
 
 const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Не бейте. 🐤
@@ -21,7 +21,7 @@ const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Н
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFetchRssContext.mockResolvedValue('RSS context');
+  mockFetchHackerNewsContext.mockResolvedValue('HN context');
   mockValidatePost.mockReturnValue({ valid: true, errors: [] });
 });
 
@@ -92,7 +92,7 @@ describe('generatePipelinePost', () => {
     expect(result.timing).toHaveProperty('fix2');
   });
 
-  it('exposes rssContext, webContext, selectedTopics in result', async () => {
+  it('exposes hnContext, webContext, selectedTopics in result', async () => {
     mockCallClaude
       .mockResolvedValueOnce('web findings')
       .mockResolvedValueOnce('topics')
@@ -101,7 +101,7 @@ describe('generatePipelinePost', () => {
 
     const result = await generatePipelinePost();
 
-    expect(result.rssContext).toBe('RSS context');
+    expect(result.hnContext).toBe('HN context');
     expect(result.webContext).toBe('web findings');
     expect(result.selectedTopics).toBe('topics');
   });

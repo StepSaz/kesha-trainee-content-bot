@@ -57,7 +57,7 @@ export default async (req: Request): Promise<Response> => {
         mode,
         channel,
         // pipeline debug data
-        rssContext: result.rssContext,
+        hnContext: result.hnContext,
         webContext: result.webContext,
         selectedTopics: result.selectedTopics,
         draft: result.draft,
