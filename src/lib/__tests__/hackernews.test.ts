@@ -99,6 +99,20 @@ describe('fetchHackerNewsContext', () => {
     expect(result.itemCount).toBe(0);
   });
 
+  it('does not leak HN engagement metrics into the formatted context', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: async () => SAMPLE_FEED,
+    }));
+
+    const { context } = await fetchHackerNewsContext();
+
+    // Significance is encoded in the order (sort by agg_score desc), not exposed as raw numbers.
+    // Models pick these up and quote them verbatim ("1318 голосов на HN") — keep them out.
+    expect(context).not.toMatch(/score=/);
+    expect(context).not.toMatch(/comments=/);
+    expect(context).not.toMatch(/agg=/);
+  });
+
   it('handles items without ai_summary gracefully', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       json: async () => ({
