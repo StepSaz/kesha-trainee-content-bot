@@ -1,12 +1,14 @@
 {
-  "rss_feeds": [
-    {
-      "name": "shir-man AI Trends",
-      "url": "https://shir-man.com/api/rss",
-      "description": "AI & Tech trends: Hacker News, GitHub trending, Midjourney, LessWrong, Lobsters.",
-      "max_items": 10
-    }
-  ],
+  "hackernews_api": {
+    "url": "https://shir-man.com/api/feed?sort=week",
+    "max_items": 15,
+    "fallback_threshold": 8,
+    "keywords": [
+      "AI", "LLM", "GPT", "Claude", "Anthropic", "OpenAI", "ChatGPT",
+      "Gemini", "Google DeepMind", "Meta AI", "Llama", "Mistral",
+      "agent", "coding assistant", "Copilot", "Cursor", "model"
+    ]
+  },
   "priority_sources": [
     "TechCrunch AI news",
     "The Verge AI",

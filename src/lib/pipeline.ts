@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { callClaude } from './claude.js';
-import { fetchRssContext } from './rss.js';
+import { fetchHackerNewsContext } from './hackernews.js';
 import { validatePost } from './validator.js';
 
 function readConfig(filename: string): string {
@@ -21,12 +21,13 @@ interface PipelineConfig {
 
 interface SourcesConfig {
   search_queries: string[];
+  hackernews_api?: { fallback_threshold?: number };
 }
 
 export interface PipelineResult {
   success: boolean;
   post?: string;
-  rssContext: string;
+  hnContext: string;
   webContext: string;
   selectedTopics: string;
   draft: string;
@@ -75,7 +76,7 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   }
 }
 
-async function selectTopics(rssContext: string, webContext: string, cfg: PipelineConfig, publishedTopics?: string[]): Promise<string> {
+async function selectTopics(hnContext: string, webContext: string, cfg: PipelineConfig, publishedTopics?: string[]): Promise<string> {
   const systemPrompt = `You are a content curator for a Russian-language Telegram channel about AI and tech. Audience: IT analysts, product managers, and a broad tech audience. Practical impact and ecosystem significance matter more than technical depth.
 
 Select topics using this tiered rubric:
@@ -111,7 +112,7 @@ SELECTION ALGORITHM - follow this sequence exactly:
 4. If final total is exactly 3, append SPARSE_WEEK on its own line at the very end.
 5. Count your numbered topics. If the count is 3, append SPARSE_WEEK. If the count is 4 or 5, stop - do not append SPARSE_WEEK.`;
 
-  const userMessage = `Here is this week's content:\n\nRSS feed:\n${rssContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed. SPARSE_WEEK only if exactly 3 topics total - and if so, it must be the very last word in your response with nothing after it.`;
+  const userMessage = `Here is this week's content:\n\nHacker News digest:\n${hnContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed. SPARSE_WEEK only if exactly 3 topics total - and if so, it must be the very last word in your response with nothing after it.`;
 
   const sliced = publishedTopics ? publishedTopics.slice(-4) : [];
   const dedupBlock = sliced.length > 0
@@ -131,7 +132,7 @@ SELECTION ALGORITHM - follow this sequence exactly:
 }
 
 async function generatePost(
-  rssContext: string,
+  hnContext: string,
   webContext: string,
   selectedTopics: string,
   topicCount: number,
@@ -163,7 +164,7 @@ async function generatePost(
 
   return callClaude({
     systemPrompt: persona,
-    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из RSS:\n${rssContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}${topicNote}${introsBlock}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
+    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}${topicNote}${introsBlock}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
     model: cfg.steps.generate.model,
     temperature: cfg.steps.generate.temperature,
     maxTokens: cfg.steps.generate.max_tokens,
@@ -216,18 +217,39 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
   const timing: Record<string, number> = {};
 
   try {
-    // Step 0: Gather context in parallel
+    // Step 0: Gather context — HN first, web search only as fallback
     const t0 = Date.now();
-    const [rssContext, webContext] = await Promise.all([
-      fetchRssContext(),
-      fetchWebContext(cfg),
-    ]);
+    const sources = JSON.parse(readConfig('sources.json')) as SourcesConfig;
+    const threshold = sources.hackernews_api?.fallback_threshold ?? 8;
+
+    let hnContext = '';
+    let webContext = '';
+    let hnOk = false;
+    let hnItemCount = 0;
+    try {
+      const hn = await fetchHackerNewsContext();
+      hnContext = hn.context;
+      hnItemCount = hn.itemCount;
+      hnOk = true;
+    } catch (err) {
+      console.warn('[pipeline] hackernews fetch failed, will fall back to web search:', err);
+    }
+
+    if (!hnOk) {
+      console.log('[pipeline] running web search (HN unavailable)');
+      webContext = await fetchWebContext(cfg);
+    } else if (hnItemCount < threshold) {
+      console.log(`[pipeline] running web search (sparse HN: ${hnItemCount} < ${threshold})`);
+      webContext = await fetchWebContext(cfg);
+    } else {
+      console.log(`[pipeline] skipping web search (HN has ${hnItemCount} items, threshold ${threshold})`);
+    }
     timing.gatherContext = Date.now() - t0;
     console.log(`[pipeline] context gathered in ${timing.gatherContext}ms`);
 
     // Step 1: Select topics
     const t1 = Date.now();
-    const rawTopics = await selectTopics(rssContext, webContext, cfg, options.publishedTopics);
+    const rawTopics = await selectTopics(hnContext, webContext, cfg, options.publishedTopics);
     timing.selectTopics = Date.now() - t1;
     console.log(`[pipeline] topics selected in ${timing.selectTopics}ms`);
 
@@ -242,7 +264,7 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
 
     // Step 2: Generate
     const t2 = Date.now();
-    const draft = await generatePost(rssContext, webContext, selectedTopics, topicCount, cfg, options.previousIntros);
+    const draft = await generatePost(hnContext, webContext, selectedTopics, topicCount, cfg, options.previousIntros);
     timing.generate = Date.now() - t2;
     console.log(`[pipeline] post generated in ${timing.generate}ms`);
 
@@ -280,7 +302,7 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
     return {
       success: validation.valid,
       post: validation.valid ? finalPost : undefined,
-      rssContext,
+      hnContext,
       webContext,
       selectedTopics,
       draft,
@@ -292,7 +314,7 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
     console.error('[pipeline] unexpected error:', err);
     return {
       success: false,
-      rssContext: '',
+      hnContext: '',
       webContext: '',
       selectedTopics: '',
       draft: '',

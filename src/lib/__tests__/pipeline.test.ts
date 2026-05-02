@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../claude.js', () => ({ callClaude: vi.fn() }));
-vi.mock('../rss.js', () => ({ fetchRssContext: vi.fn() }));
+vi.mock('../hackernews.js', () => ({ fetchHackerNewsContext: vi.fn() }));
 vi.mock('../validator.js', () => ({ validatePost: vi.fn() }));
 
 import { generatePipelinePost, extractIntro } from '../pipeline.js';
 import { callClaude } from '../claude.js';
-import { fetchRssContext } from '../rss.js';
+import { fetchHackerNewsContext } from '../hackernews.js';
 import { validatePost } from '../validator.js';
 
 const mockCallClaude = vi.mocked(callClaude);
-const mockFetchRssContext = vi.mocked(fetchRssContext);
+const mockFetchHackerNewsContext = vi.mocked(fetchHackerNewsContext);
 const mockValidatePost = vi.mocked(validatePost);
 
 const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Не бейте. 🐤
@@ -19,16 +19,16 @@ const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Н
 
 Тестовый пост.`;
 
+// Default: HN returns enough items to skip web search fallback (threshold=8 in sources.json)
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFetchRssContext.mockResolvedValue('RSS context');
+  mockFetchHackerNewsContext.mockResolvedValue({ context: 'HN context', itemCount: 10 });
   mockValidatePost.mockReturnValue({ valid: true, errors: [] });
 });
 
 describe('generatePipelinePost', () => {
   it('returns success with post when review says хорошо (skips rewrite)', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('web context')        // fetchWebContext
       .mockResolvedValueOnce('topic 1, topic 2')   // selectTopics
       .mockResolvedValueOnce(VALID_POST)            // generatePost
       .mockResolvedValueOnce('хорошо\n\nВсё отлично!'); // reviewPost
@@ -37,14 +37,13 @@ describe('generatePipelinePost', () => {
 
     expect(result.success).toBe(true);
     expect(result.post).toBe(VALID_POST);
-    expect(mockCallClaude).toHaveBeenCalledTimes(4); // no rewrite
+    expect(mockCallClaude).toHaveBeenCalledTimes(3); // no web search, no rewrite
     expect(result.timing).not.toHaveProperty('rewrite');
   });
 
   it('calls rewrite when review does not start with хорошо', async () => {
     const rewrittenPost = VALID_POST + ' (rewritten)';
     mockCallClaude
-      .mockResolvedValueOnce('web context')
       .mockResolvedValueOnce('topic 1')
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('нужна переработка\n\nФраза X звучит generic.')
@@ -52,7 +51,7 @@ describe('generatePipelinePost', () => {
 
     const result = await generatePipelinePost();
 
-    expect(mockCallClaude).toHaveBeenCalledTimes(5);
+    expect(mockCallClaude).toHaveBeenCalledTimes(4);
     expect(result.draft).toBe(VALID_POST);
     expect(result.post).toBe(rewrittenPost);
     expect(result.timing).toHaveProperty('rewrite');
@@ -61,7 +60,6 @@ describe('generatePipelinePost', () => {
   it('auto-fixes post when validation fails on first attempt', async () => {
     const fixedPost = VALID_POST + ' (fixed)';
     mockCallClaude
-      .mockResolvedValueOnce('web context')
       .mockResolvedValueOnce('topics')
       .mockResolvedValueOnce('too long post')
       .mockResolvedValueOnce('хорошо')
@@ -76,7 +74,7 @@ describe('generatePipelinePost', () => {
     expect(result.success).toBe(true);
     expect(result.post).toBe(fixedPost);
     expect(result.timing).toHaveProperty('fix1');
-    expect(mockCallClaude).toHaveBeenCalledTimes(5);
+    expect(mockCallClaude).toHaveBeenCalledTimes(4);
   });
 
   it('returns failure with errors when validation fails after all fix attempts', async () => {
@@ -92,31 +90,29 @@ describe('generatePipelinePost', () => {
     expect(result.timing).toHaveProperty('fix2');
   });
 
-  it('exposes rssContext, webContext, selectedTopics in result', async () => {
+  it('exposes hnContext, webContext, selectedTopics in result', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('web findings')
       .mockResolvedValueOnce('topics')
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('хорошо');
 
     const result = await generatePipelinePost();
 
-    expect(result.rssContext).toBe('RSS context');
-    expect(result.webContext).toBe('web findings');
+    expect(result.hnContext).toBe('HN context');
+    expect(result.webContext).toBe(''); // HN above threshold → web skipped
     expect(result.selectedTopics).toBe('topics');
   });
 
   it('strips false SPARSE_WEEK when 4+ numbered topics are present', async () => {
     const falseSparseTopic = '1. Topic A\n2. Topic B\n3. Topic C\n4. Topic D\nSPARSE_WEEK';
     mockCallClaude
-      .mockResolvedValueOnce('web context')
       .mockResolvedValueOnce(falseSparseTopic)
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('хорошо');
 
     const result = await generatePipelinePost();
 
-    const generateCall = mockCallClaude.mock.calls[2];
+    const generateCall = mockCallClaude.mock.calls[1];
     const userMessage = generateCall[0].userMessage as string;
     expect(userMessage).not.toContain('SPARSE_WEEK');
     expect(result.selectedTopics).not.toContain('SPARSE_WEEK');
@@ -125,14 +121,13 @@ describe('generatePipelinePost', () => {
   it('passes SPARSE_WEEK hint to generatePost when selectTopics includes it', async () => {
     const sparseTopics = 'Topic 1\nTopic 2\nSPARSE_WEEK';
     mockCallClaude
-      .mockResolvedValueOnce('web context')
       .mockResolvedValueOnce(sparseTopics)
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('хорошо');
 
     await generatePipelinePost();
 
-    const generateCall = mockCallClaude.mock.calls[2];
+    const generateCall = mockCallClaude.mock.calls[1];
     const userMessage = generateCall[0].userMessage as string;
     expect(userMessage).toContain('SPARSE_WEEK');
     expect(userMessage).toContain('3 темы');
@@ -140,7 +135,6 @@ describe('generatePipelinePost', () => {
 
   it('includes timing keys for each step', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('web')
       .mockResolvedValueOnce('topics')
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('хорошо');
@@ -154,10 +148,55 @@ describe('generatePipelinePost', () => {
   });
 });
 
+describe('generatePipelinePost web search fallback', () => {
+  it('skips web search when HN returns enough items', async () => {
+    mockFetchHackerNewsContext.mockResolvedValue({ context: 'HN ctx', itemCount: 10 });
+    mockCallClaude
+      .mockResolvedValueOnce('topics')
+      .mockResolvedValueOnce(VALID_POST)
+      .mockResolvedValueOnce('хорошо');
+
+    const result = await generatePipelinePost();
+
+    expect(result.webContext).toBe('');
+    // 3 calls = selectTopics + generate + review (no web search, no rewrite)
+    expect(mockCallClaude).toHaveBeenCalledTimes(3);
+  });
+
+  it('runs web search when HN throws (API unavailable)', async () => {
+    mockFetchHackerNewsContext.mockRejectedValue(new Error('API down'));
+    mockCallClaude
+      .mockResolvedValueOnce('web fallback findings') // fetchWebContext
+      .mockResolvedValueOnce('topics')
+      .mockResolvedValueOnce(VALID_POST)
+      .mockResolvedValueOnce('хорошо');
+
+    const result = await generatePipelinePost();
+
+    expect(result.hnContext).toBe('');
+    expect(result.webContext).toBe('web fallback findings');
+    expect(mockCallClaude).toHaveBeenCalledTimes(4);
+  });
+
+  it('runs web search when HN itemCount is below threshold (sparse week)', async () => {
+    mockFetchHackerNewsContext.mockResolvedValue({ context: 'sparse HN ctx', itemCount: 3 });
+    mockCallClaude
+      .mockResolvedValueOnce('web supplement') // fetchWebContext
+      .mockResolvedValueOnce('topics')
+      .mockResolvedValueOnce(VALID_POST)
+      .mockResolvedValueOnce('хорошо');
+
+    const result = await generatePipelinePost();
+
+    expect(result.hnContext).toBe('sparse HN ctx');
+    expect(result.webContext).toBe('web supplement');
+    expect(mockCallClaude).toHaveBeenCalledTimes(4);
+  });
+});
+
 describe('generatePipelinePost with publishedTopics', () => {
   it('injects dedup block into selectTopics system prompt when publishedTopics provided', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('web context')
       .mockResolvedValueOnce('1. Topic A\n2. Topic B\n3. Topic C')
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('хорошо');
@@ -166,34 +205,32 @@ describe('generatePipelinePost with publishedTopics', () => {
       publishedTopics: ['1. OldTopic X (Anthropic)', '1. OldTopic Y (OpenAI)'],
     });
 
-    const selectCall = mockCallClaude.mock.calls[1];
+    const selectCall = mockCallClaude.mock.calls[0];
     expect(selectCall[0].systemPrompt).toContain('OldTopic X');
     expect(selectCall[0].systemPrompt).toContain('НЕ повторяй');
   });
 
   it('does not add dedup block when publishedTopics is empty array', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('web context')
       .mockResolvedValueOnce('1. Topic A\n2. Topic B\n3. Topic C')
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('хорошо');
 
     await generatePipelinePost({ publishedTopics: [] });
 
-    const selectCall = mockCallClaude.mock.calls[1];
+    const selectCall = mockCallClaude.mock.calls[0];
     expect(selectCall[0].systemPrompt).not.toContain('НЕ повторяй');
   });
 
   it('does not add dedup block when no options provided', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('web context')
       .mockResolvedValueOnce('1. Topic A')
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('хорошо');
 
     await generatePipelinePost();
 
-    const selectCall = mockCallClaude.mock.calls[1];
+    const selectCall = mockCallClaude.mock.calls[0];
     expect(selectCall[0].systemPrompt).not.toContain('НЕ повторяй');
   });
 });
@@ -201,7 +238,6 @@ describe('generatePipelinePost with publishedTopics', () => {
 describe('generatePipelinePost with previousIntros', () => {
   it('injects intros block into generatePost user message when previousIntros provided', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('web context')
       .mockResolvedValueOnce('1. Topic A\n2. Topic B\n3. Topic C')
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('хорошо');
@@ -210,21 +246,20 @@ describe('generatePipelinePost with previousIntros', () => {
       previousIntros: ['Четверг, прогрелся, завис на HN.', 'Пятница, читал RSS.'],
     });
 
-    const generateCall = mockCallClaude.mock.calls[2];
+    const generateCall = mockCallClaude.mock.calls[1];
     expect(generateCall[0].userMessage).toContain('Четверг, прогрелся');
     expect(generateCall[0].userMessage).toContain('НЕ повторяй');
   });
 
   it('does not add intros block when previousIntros is empty', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('web context')
       .mockResolvedValueOnce('1. Topic A')
       .mockResolvedValueOnce(VALID_POST)
       .mockResolvedValueOnce('хорошо');
 
     await generatePipelinePost({ previousIntros: [] });
 
-    const generateCall = mockCallClaude.mock.calls[2];
+    const generateCall = mockCallClaude.mock.calls[1];
     expect(generateCall[0].userMessage).not.toContain('НЕ повторяй');
   });
 });

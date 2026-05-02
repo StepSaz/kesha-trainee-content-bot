@@ -8,7 +8,7 @@ interface StoredResult {
   mode?: string;
   channel?: string;
   // pipeline-specific
-  rssContext?: string;
+  hnContext?: string;
   webContext?: string;
   selectedTopics?: string;
   draft?: string;
@@ -68,11 +68,11 @@ function renderPage(result: StoredResult | null, secret: string): string {
 
     // Pipeline debug sections
     if (result.mode !== 'managed') {
-      const rssLines = result.rssContext ? result.rssContext.split('\n').length : 0;
+      const hnLines = result.hnContext ? result.hnContext.split('\n').length : 0;
       const webLines = result.webContext ? result.webContext.split('\n').length : 0;
 
-      sections += section('rss', '📡 RSS контекст', `${rssLines} строк`,
-        e(result.rssContext ?? '(пусто)'));
+      sections += section('hn', '🐦 HN контекст', `${hnLines} строк`,
+        e(result.hnContext ?? '(пусто)'));
 
       sections += section('web', '🌐 Web поиск', `${webLines} строк`,
         e(result.webContext ?? '(пусто)'));
