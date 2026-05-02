@@ -64,9 +64,8 @@ export async function fetchHackerNewsContext(): Promise<HackerNewsResult> {
 
   const formatted = filtered.map((item, i) => {
     const tldr = item.ai_summary?.tldr?.trim();
-    const meta = `score=${item.score ?? 0}, comments=${item.descendants ?? 0}, agg=${item.agg_score ?? 0}`;
     const summary = tldr ? `\n   TL;DR: ${tldr}` : '';
-    return `${i + 1}. ${item.title ?? 'No title'} (${meta})\n   ${item.url ?? ''}${summary}`;
+    return `${i + 1}. ${item.title ?? 'No title'}\n   ${item.url ?? ''}${summary}`;
   }).join('\n\n');
 
   return {
