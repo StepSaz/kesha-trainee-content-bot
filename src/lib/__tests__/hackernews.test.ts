@@ -50,12 +50,13 @@ describe('fetchHackerNewsContext', () => {
       json: async () => SAMPLE_FEED,
     }));
 
-    const result = await fetchHackerNewsContext();
+    const { context, itemCount } = await fetchHackerNewsContext();
 
-    expect(result).toContain('Hacker News');
-    expect(result).toContain('Grok 4.3 released');
-    expect(result).toContain('Uber spent its AI budget on Claude Code');
-    expect(result).not.toContain('sourdough');
+    expect(context).toContain('Hacker News');
+    expect(context).toContain('Grok 4.3 released');
+    expect(context).toContain('Uber spent its AI budget on Claude Code');
+    expect(context).not.toContain('sourdough');
+    expect(itemCount).toBe(2);
   });
 
   it('orders items by agg_score descending', async () => {
@@ -63,9 +64,9 @@ describe('fetchHackerNewsContext', () => {
       json: async () => SAMPLE_FEED,
     }));
 
-    const result = await fetchHackerNewsContext();
-    const grokIdx = result.indexOf('Grok 4.3');
-    const uberIdx = result.indexOf('Uber spent');
+    const { context } = await fetchHackerNewsContext();
+    const grokIdx = context.indexOf('Grok 4.3');
+    const uberIdx = context.indexOf('Uber spent');
 
     expect(grokIdx).toBeGreaterThan(0);
     expect(uberIdx).toBeGreaterThan(grokIdx);
@@ -76,27 +77,26 @@ describe('fetchHackerNewsContext', () => {
       json: async () => SAMPLE_FEED,
     }));
 
-    const result = await fetchHackerNewsContext();
+    const { context } = await fetchHackerNewsContext();
 
-    expect(result).toContain('TL;DR: xAI launched Grok 4.3');
+    expect(context).toContain('TL;DR: xAI launched Grok 4.3');
   });
 
-  it('returns empty string on network error', async () => {
+  it('throws on network error', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')));
 
-    const result = await fetchHackerNewsContext();
-
-    expect(result).toBe('');
+    await expect(fetchHackerNewsContext()).rejects.toThrow('network error');
   });
 
-  it('returns empty string when feed has no hackerNews items', async () => {
+  it('returns empty result when feed has no hackerNews items', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       json: async () => ({ generatedAt: 'now', sortMode: 'week' }),
     }));
 
     const result = await fetchHackerNewsContext();
 
-    expect(result).toBe('');
+    expect(result.context).toBe('');
+    expect(result.itemCount).toBe(0);
   });
 
   it('handles items without ai_summary gracefully', async () => {
@@ -109,9 +109,9 @@ describe('fetchHackerNewsContext', () => {
       }),
     }));
 
-    const result = await fetchHackerNewsContext();
+    const { context } = await fetchHackerNewsContext();
 
-    expect(result).toContain('New OpenAI feature');
-    expect(result).not.toContain('TL;DR');
+    expect(context).toContain('New OpenAI feature');
+    expect(context).not.toContain('TL;DR');
   });
 });

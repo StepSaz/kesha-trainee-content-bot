@@ -6,7 +6,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "setup:managed": "npx tsx scripts/setup-managed-agent.ts",
-    "setup:boss-webhook": "npx tsx scripts/setup-boss-webhook.ts"
+    "setup:boss-webhook": "npx tsx scripts/setup-boss-webhook.ts",
+    "verify:hn": "npx tsx scripts/verify-hn.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

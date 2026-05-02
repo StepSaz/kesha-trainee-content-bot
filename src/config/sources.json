@@ -2,6 +2,7 @@
   "hackernews_api": {
     "url": "https://shir-man.com/api/feed?sort=week",
     "max_items": 15,
+    "fallback_threshold": 8,
     "keywords": [
       "AI", "LLM", "GPT", "Claude", "Anthropic", "OpenAI", "ChatGPT",
       "Gemini", "Google DeepMind", "Meta AI", "Llama", "Mistral",

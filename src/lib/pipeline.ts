@@ -21,6 +21,7 @@ interface PipelineConfig {
 
 interface SourcesConfig {
   search_queries: string[];
+  hackernews_api?: { fallback_threshold?: number };
 }
 
 export interface PipelineResult {
@@ -216,12 +217,33 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
   const timing: Record<string, number> = {};
 
   try {
-    // Step 0: Gather context in parallel
+    // Step 0: Gather context — HN first, web search only as fallback
     const t0 = Date.now();
-    const [hnContext, webContext] = await Promise.all([
-      fetchHackerNewsContext(),
-      fetchWebContext(cfg),
-    ]);
+    const sources = JSON.parse(readConfig('sources.json')) as SourcesConfig;
+    const threshold = sources.hackernews_api?.fallback_threshold ?? 8;
+
+    let hnContext = '';
+    let webContext = '';
+    let hnOk = false;
+    let hnItemCount = 0;
+    try {
+      const hn = await fetchHackerNewsContext();
+      hnContext = hn.context;
+      hnItemCount = hn.itemCount;
+      hnOk = true;
+    } catch (err) {
+      console.warn('[pipeline] hackernews fetch failed, will fall back to web search:', err);
+    }
+
+    if (!hnOk) {
+      console.log('[pipeline] running web search (HN unavailable)');
+      webContext = await fetchWebContext(cfg);
+    } else if (hnItemCount < threshold) {
+      console.log(`[pipeline] running web search (sparse HN: ${hnItemCount} < ${threshold})`);
+      webContext = await fetchWebContext(cfg);
+    } else {
+      console.log(`[pipeline] skipping web search (HN has ${hnItemCount} items, threshold ${threshold})`);
+    }
     timing.gatherContext = Date.now() - t0;
     console.log(`[pipeline] context gathered in ${timing.gatherContext}ms`);
 
