@@ -21,6 +21,14 @@
 - Ровно один disclaimer-блок «Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ» в самом начале.
 - Финальная подпись на отдельной строке для weekly-режима (для stream-режима — отдельный набор правил, см. #8).
 
+**Архитектура валидатора — гибкая, по режимам.** Сейчас в `validator.ts` уже есть два валидатора (`validatePost` для weekly + `validateBossPost` для raw rewrite от Степана), и правила между ними расходятся (weekly требует ≥3 `📎`, boss — нет). Stream (#8) добавит третий режим со своими правилами. Не делать big-switch внутри одной функции, а композировать:
+
+- **Общие правила** (живут в одном месте, переиспользуются всеми режимами): `noEmDash`, `noMarkdown` (`**`/`##`/```), `maxLength`, `chickenDistance` (минимум N символов между двумя 🐤).
+- **Mode-specific правила** (подключаются под режим): `requireSourceMarkers(min)`, `requireSignature(pattern)`, `requireDisclaimer`, `requireTopicCount(min, max)`, `requireFinalTag('@st_szs')` и т.п.
+- **Сборка**: `validateWeekly`, `validateStream`, `validateBoss` — каждый собирается из общих + своих специфичных. Один тип `ValidationResult`, один способ возвращать ошибки.
+
+Это сохраняет читаемость (видно, какие правила у какого режима), убирает дубль кода между weekly/boss, и режим #8 встаёт в ту же модель без боли.
+
 **Эффект.** Убивает целый класс багов с парсингом. Разблокирует #2 и #4.
 
 **Файлы:** `src/lib/pipeline.ts`, `src/lib/validator.ts`, `src/config/kesha-reviewer.txt`, `src/lib/__tests__/pipeline.test.ts`, `src/lib/__tests__/validator.test.ts`.
