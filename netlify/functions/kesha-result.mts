@@ -83,7 +83,7 @@ function renderPage(result: StoredResult | null, secret: string): string {
         : '(пусто)';
       sections += section('topics', '🎯 Выбранные темы', '', topicsBody, true);
 
-      const reviewVerdict = result.reviewVerdict ?? '';
+      const reviewVerdict = result.reviewVerdict ?? result.review?.verdict ?? '';
       const reviewBadge = reviewVerdict === 'ok'
         ? '✅ ok — перезапись пропущена'
         : result.rewrote
