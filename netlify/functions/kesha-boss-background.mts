@@ -360,13 +360,27 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   const replyToId = message.reply_to_message?.message_id;
   if (!replyToId) return;
 
+  if (!message.text) return;
+
   const store = getStore('kesha');
   const rateKey = `comment-rate:${replyToId}`;
-  const currentCount = (await store.get(rateKey, { type: 'json' }) as number | null) ?? 0;
-  if (currentCount >= 3) return;
-  await store.setJSON(rateKey, currentCount + 1);
+  const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+  const expiresAt = new Date(Date.now() + thirtyDaysMs).toISOString();
 
-  const intent = parseCommentIntent(message.text ?? '');
+  const existing = await store.getWithMetadata(rateKey, { type: 'json' });
+  const currentCount = (existing?.data as number | null) ?? 0;
+  const storedExpiry = existing?.metadata?.expiresAt as string | undefined;
+
+  // If the blob exists but has passed its logical expiry, treat count as 0
+  const effectiveCount = storedExpiry && new Date() > new Date(storedExpiry) ? 0 : currentCount;
+
+  if (effectiveCount >= 3) return;
+
+  await store.setJSON(rateKey, effectiveCount + 1, {
+    metadata: { expiresAt },
+  });
+
+  const intent = parseCommentIntent(message.text);
   const postText = message.reply_to_message?.text ?? '';
 
   const intentInstructions: Record<CommentIntent, string> = {
@@ -385,6 +399,11 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
       temperature: 0.7,
       maxTokens: 300,
     });
+
+    if (!response) {
+      console.error('[boss] comment reaction: Claude returned empty response, skipping send');
+      return;
+    }
 
     await sendMessage(chatId, response, { replyToMessageId: message.message_id });
   } catch (err) {
