@@ -4,7 +4,7 @@ import { callClaude, callClaudeStructured, type ToolDef } from './claude.js';
 import { fetchHackerNewsContext } from './sources.js';
 import { validatePost } from './validator.js';
 import { findHallucinated } from './url-checker.js';
-import { type MemoryEntry, findCallbacks } from './memory.js';
+import { type MemoryEntry } from './memory.js';
 
 function readConfig(filename: string): string {
   return readFileSync(join(process.cwd(), 'src/config', filename), 'utf-8');
@@ -197,10 +197,13 @@ SELECTION ALGORITHM - follow this sequence exactly:
 
   const userMessage = `Here is this week's content:\n\nHacker News digest:\n${hnContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. For each: topic name, source URL, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed.`;
 
-  const recentMs = 8 * 7 * 24 * 60 * 60 * 1000;
-  const recent = (memoryEntries ?? []).filter(
-    e => Date.now() - new Date(e.publishedAt).getTime() < recentMs
-  );
+  const DEDUP_WINDOW_MS = 8 * 7 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const recent = (memoryEntries ?? []).filter(e => {
+    const t = new Date(e.publishedAt).getTime();
+    if (Number.isNaN(t)) return false;
+    return now - t < DEDUP_WINDOW_MS;
+  });
   const dedupBlock = recent.length > 0
     ? `\n\nТЕМЫ ИЗ ПОСЛЕДНИХ ПОСТОВ (НЕ повторяй эти же события - даже если они снова в фиде):\n${
         recent.map(e => `- ${e.title}${e.url ? ` (${e.url})` : ''}`).join('\n')

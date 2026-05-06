@@ -320,6 +320,7 @@ describe('generatePipelinePost with memoryEntries', () => {
     const selectCallParams = mockCallClaudeStructured.mock.calls[0][0];
     expect(selectCallParams.systemPrompt).toContain('OldTopic X');
     expect(selectCallParams.systemPrompt).toContain('НЕ повторяй');
+    expect(selectCallParams.systemPrompt).toContain('ТЕМЫ ИЗ ПОСЛЕДНИХ ПОСТОВ');
   });
 
   it('does not add dedup block when memoryEntries is empty array', async () => {
