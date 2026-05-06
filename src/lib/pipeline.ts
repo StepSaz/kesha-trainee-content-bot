@@ -4,7 +4,7 @@ import { callClaude, callClaudeStructured, type ToolDef } from './claude.js';
 import { fetchHackerNewsContext } from './sources.js';
 import { validatePost } from './validator.js';
 import { findHallucinated } from './url-checker.js';
-import { type MemoryEntry } from './memory.js';
+import { type MemoryEntry, findCallbacks } from './memory.js';
 
 function readConfig(filename: string): string {
   return readFileSync(join(process.cwd(), 'src/config', filename), 'utf-8');
@@ -225,7 +225,8 @@ async function generatePost(
   webContext: string,
   selectedTopics: SelectedTopics,
   cfg: PipelineConfig,
-  previousIntros?: string[]
+  previousIntros?: string[],
+  memoryEntries?: MemoryEntry[]
 ): Promise<string> {
   const persona = readConfig('kesha-persona.txt');
   const now = new Date();
@@ -255,9 +256,25 @@ async function generatePost(
       }`
     : '';
 
+  const callbackMatches = findCallbacks(
+    selectedTopics.topics.map(t => t.title),
+    memoryEntries ?? []
+  );
+  const callbackBlock = callbackMatches.length > 0
+    ? `\n\nCALLBACK CONTEXT (используй по желанию — только если органично вписывается в пост):\n${
+        callbackMatches.map(e => {
+          const weeksAgo = Math.round(
+            (Date.now() - new Date(e.publishedAt).getTime()) / (7 * 24 * 60 * 60 * 1000)
+          );
+          const ago = weeksAgo === 1 ? '1 неделю' : `${weeksAgo} недели`;
+          return `- "${e.title}" упоминался ${ago} назад — можно сослаться как на развитие истории`;
+        }).join('\n')
+      }`
+    : '';
+
   return callClaude({
     systemPrompt: persona,
-    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${topicsProse}${sparseNote}${topicNote}${introsBlock}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
+    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${topicsProse}${sparseNote}${topicNote}${introsBlock}${callbackBlock}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
     model: cfg.steps.generate.model,
     temperature: cfg.steps.generate.temperature,
     maxTokens: cfg.steps.generate.max_tokens,
@@ -358,7 +375,7 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
 
     // Step 2: Generate
     const t2 = Date.now();
-    const draft = await generatePost(hnContext, webContext, selectedTopics, cfg, options.previousIntros);
+    const draft = await generatePost(hnContext, webContext, selectedTopics, cfg, options.previousIntros, options.memoryEntries);
     timing.generate = Date.now() - t2;
     console.log(`[pipeline] post generated in ${timing.generate}ms`);
 

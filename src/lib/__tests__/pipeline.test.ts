@@ -377,6 +377,45 @@ describe('generatePipelinePost with previousIntros', () => {
   });
 });
 
+describe('generatePipelinePost with callbacks', () => {
+  it('injects CALLBACK CONTEXT into generatePost when findCallbacks returns matches', async () => {
+    const callbackEntry = {
+      url: '',
+      title: 'GPT-5 Flash release',
+      publishedAt: new Date(Date.now() - 3 * 7 * 24 * 60 * 60 * 1000).toISOString(),
+      postId: null,
+    };
+    mockFindCallbacks.mockReturnValueOnce([callbackEntry]);
+
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
+
+    await generatePipelinePost({
+      memoryEntries: [callbackEntry],
+    });
+
+    const generateCallParams = mockCallClaude.mock.calls[0][0];
+    expect(generateCallParams.userMessage).toContain('CALLBACK CONTEXT');
+    expect(generateCallParams.userMessage).toContain('GPT-5 Flash release');
+  });
+
+  it('does not inject CALLBACK CONTEXT when findCallbacks returns empty', async () => {
+    mockFindCallbacks.mockReturnValueOnce([]);
+
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
+
+    await generatePipelinePost({ memoryEntries: [] });
+
+    const generateCallParams = mockCallClaude.mock.calls[0][0];
+    expect(generateCallParams.userMessage).not.toContain('CALLBACK CONTEXT');
+  });
+});
+
 describe('extractIntro', () => {
   it('returns text before first ~ ~ ~ separator, trimmed', () => {
     const post = 'Кеша на проводе.\n\nПривет, это интро.\n\n~ ~ ~\n\nСекция 1.';
