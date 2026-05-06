@@ -11,6 +11,8 @@ import {
   answerCallbackQuery,
   type InlineKeyboard,
 } from '../../src/lib/telegram.js';
+import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
+import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
 
 interface TelegramUser {
   id: number;
@@ -55,6 +57,15 @@ interface PendingPreview {
   previewMessageId: number;
   finalText: string;
   channelId: string;
+  createdAt: string;
+}
+
+interface PendingDigest {
+  chatId: string;
+  progressMessageId: number;
+  post: string;
+  selectedTopics: PipelineResult['selectedTopics'];
+  newIntros: string[];
   createdAt: string;
 }
 
@@ -216,6 +227,111 @@ async function handleCallback(callbackQuery: TelegramCallbackQuery): Promise<voi
   }
 }
 
+async function handleDigest(message: TelegramMessage): Promise<void> {
+  const chatId = String(message.chat.id);
+  const config = readBossConfig();
+
+  if (!config.allowed_user_ids.includes(message.from.id)) {
+    await sendMessage(chatId, 'Только для начальника 🐤');
+    return;
+  }
+
+  const progressResult = await sendMessage(chatId, '⏳ генерирую дайджест... (~60-90 сек)');
+  if (!progressResult.success || !progressResult.messageId) return;
+  const progressMessageId = progressResult.messageId;
+
+  const store = getStore('kesha');
+
+  try {
+    const memoryEntries = await loadMemory();
+    const previousIntros = (await store.get('previous-intros', { type: 'json' }) as string[] | null) ?? [];
+
+    const result = await generatePipelinePost({ memoryEntries, previousIntros });
+
+    if (!result.success || !result.post) {
+      await editMessageText(chatId, progressMessageId,
+        `❌ Пайплайн упал: ${(result.errors ?? []).join(', ')}`);
+      return;
+    }
+
+    const newIntro = extractIntro(result.post);
+    const newIntros = [...previousIntros, newIntro].slice(-10);
+
+    const pending: PendingDigest = {
+      chatId,
+      progressMessageId,
+      post: result.post,
+      selectedTopics: result.selectedTopics,
+      newIntros,
+      createdAt: new Date().toISOString(),
+    };
+    await store.setJSON('pending-digest', pending);
+
+    const keyboard: InlineKeyboard = {
+      inline_keyboard: [[
+        { text: '🧪 В тест', callback_data: 'digest_test' },
+        { text: '📢 В прод', callback_data: 'digest_prod' },
+        { text: '❌ Отмена', callback_data: 'digest_cancel' },
+      ]],
+    };
+
+    await editMessageText(chatId, progressMessageId, '✅ Готово, пост ниже — выбери куда отправить:');
+    await sendMessage(chatId, result.post, { replyMarkup: keyboard });
+  } catch (err) {
+    await editMessageText(chatId, progressMessageId, `❌ Ошибка: ${String(err)}`);
+  }
+}
+
+async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promise<void> {
+  const callbackQueryId = callbackQuery.id;
+  const chatId = String(callbackQuery.message?.chat.id ?? '');
+  const messageId = callbackQuery.message?.message_id ?? 0;
+  const data = callbackQuery.data ?? '';
+
+  const store = getStore('kesha');
+  const pending = await store.get('pending-digest', { type: 'json' }) as PendingDigest | null;
+
+  if (!pending) {
+    await answerCallbackQuery(callbackQueryId);
+    await editMessageText(chatId, messageId, '⏰ Дайджест устарел — запусти /digest снова.', { replyMarkup: null });
+    return;
+  }
+
+  if (data === 'digest_cancel') {
+    await store.delete('pending-digest');
+    await answerCallbackQuery(callbackQueryId);
+    await editMessageText(chatId, messageId, '❌ Отменено.', { replyMarkup: null });
+    return;
+  }
+
+  const targetChatId = data === 'digest_test'
+    ? process.env.TELEGRAM_TEST_CHAT_ID!
+    : process.env.TELEGRAM_CHAT_ID!;
+
+  const sendResult = await sendToChannel(pending.post, targetChatId);
+  await store.delete('pending-digest');
+  await answerCallbackQuery(callbackQueryId);
+
+  if (!sendResult.success) {
+    await editMessageText(chatId, messageId,
+      `❌ Ошибка отправки: ${sendResult.error}`, { replyMarkup: null });
+    return;
+  }
+
+  const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map(t => ({
+    url: t.sourceUrl,
+    title: t.title,
+    publishedAt: new Date().toISOString(),
+    postId: sendResult.messageId ?? null,
+  }));
+  await appendMemory(newEntries);
+  await store.setJSON('previous-intros', pending.newIntros);
+
+  const label = data === 'digest_test' ? 'тест' : 'прод';
+  await editMessageText(chatId, messageId,
+    `✅ Отправлено в ${label}: t.me/psyreq/${sendResult.messageId}`, { replyMarkup: null });
+}
+
 export default async (req: Request): Promise<Response> => {
   let update: TelegramUpdate;
   try {
@@ -228,10 +344,20 @@ export default async (req: Request): Promise<Response> => {
 
   // Netlify background functions return 202 to caller automatically at infrastructure level.
   // We await here so the function keeps running until handlers complete (up to 15 min).
-  if (update.message?.text?.match(/^\/boss/)) {
-    await handleCommand(update.message);
-  } else if (update.callback_query) {
-    await handleCallback(update.callback_query);
+  const msg = update.message;
+  const cq = update.callback_query;
+
+  if (cq) {
+    const data = cq.data ?? '';
+    if (data.startsWith('digest_')) {
+      await handleDigestCallback(cq);
+    } else {
+      await handleCallback(cq);
+    }
+  } else if (msg?.text?.match(/^\/digest/)) {
+    await handleDigest(msg);
+  } else if (msg?.text?.match(/^\/boss/)) {
+    await handleCommand(msg);
   }
 
   return new Response(null, { status: 202 });
