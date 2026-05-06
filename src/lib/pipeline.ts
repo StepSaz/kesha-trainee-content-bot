@@ -1,8 +1,9 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { callClaude, callClaudeStructured, type ToolDef } from './claude.js';
-import { fetchHackerNewsContext } from './hackernews.js';
+import { fetchHackerNewsContext } from './sources.js';
 import { validatePost } from './validator.js';
+import { findHallucinated } from './url-checker.js';
 
 function readConfig(filename: string): string {
   return readFileSync(join(process.cwd(), 'src/config', filename), 'utf-8');
@@ -371,28 +372,39 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
       console.log(`[pipeline] review: ${review.verdict} — skipping rewrite`);
     }
 
-    // Validate and auto-fix if needed (up to 2 attempts)
+    // Validate + hallucination-check and auto-fix if needed (up to 2 attempts)
     const MAX_FIX_ATTEMPTS = 2;
-    let validation = validatePost(finalPost);
 
-    for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS && !validation.valid; attempt++) {
-      console.log(`[pipeline] validation failed (attempt ${attempt + 1}): ${validation.errors.join(', ')}`);
+    const collectErrors = (post: string): string[] => {
+      const structural = validatePost(post).errors;
+      const hallucinated = findHallucinated(post, [hnContext, webContext]);
+      const urlErrors = hallucinated.urls.map(
+        u => `Hallucinated URL not found in sources: ${u} — replace with a real URL from the provided context`,
+      );
+      return [...structural, ...urlErrors];
+    };
+
+    let postErrors = collectErrors(finalPost);
+
+    for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS && postErrors.length > 0; attempt++) {
+      console.log(`[pipeline] fix (attempt ${attempt + 1}): ${postErrors.join('; ')}`);
       const tFix = Date.now();
-      finalPost = await fixPost(finalPost, validation.errors, cfg);
+      finalPost = await fixPost(finalPost, postErrors, cfg);
       timing[`fix${attempt + 1}`] = Date.now() - tFix;
       console.log(`[pipeline] fix attempt ${attempt + 1} done in ${timing[`fix${attempt + 1}`]}ms`);
-      validation = validatePost(finalPost);
+      postErrors = collectErrors(finalPost);
     }
 
+    const success = postErrors.length === 0;
     return {
-      success: validation.valid,
-      post: validation.valid ? finalPost : undefined,
+      success,
+      post: success ? finalPost : undefined,
       hnContext,
       webContext,
       selectedTopics,
       draft,
       review,
-      errors: validation.valid ? undefined : validation.errors,
+      errors: success ? undefined : postErrors,
       timing,
     };
   } catch (err) {

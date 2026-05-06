@@ -1,18 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../claude.js', () => ({ callClaude: vi.fn(), callClaudeStructured: vi.fn() }));
-vi.mock('../hackernews.js', () => ({ fetchHackerNewsContext: vi.fn() }));
+vi.mock('../sources.js', () => ({ fetchHackerNewsContext: vi.fn() }));
 vi.mock('../validator.js', () => ({ validatePost: vi.fn() }));
+vi.mock('../url-checker.js', () => ({ findHallucinated: vi.fn() }));
 
 import { generatePipelinePost, extractIntro, type SelectedTopics, type ReviewResult } from '../pipeline.js';
 import { callClaude, callClaudeStructured } from '../claude.js';
-import { fetchHackerNewsContext } from '../hackernews.js';
+import { fetchHackerNewsContext } from '../sources.js';
 import { validatePost } from '../validator.js';
+import { findHallucinated } from '../url-checker.js';
 
 const mockCallClaude = vi.mocked(callClaude);
 const mockCallClaudeStructured = vi.mocked(callClaudeStructured);
 const mockFetchHackerNewsContext = vi.mocked(fetchHackerNewsContext);
 const mockValidatePost = vi.mocked(validatePost);
+const mockFindHallucinated = vi.mocked(findHallucinated);
 
 // A single SelectedTopic helper
 const topic = (title = 'A'): SelectedTopics['topics'][0] => ({
@@ -52,6 +55,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockFetchHackerNewsContext.mockResolvedValue({ context: 'HN context', itemCount: 10 });
   mockValidatePost.mockReturnValue({ valid: true, errors: [] });
+  mockFindHallucinated.mockReturnValue({ urls: [], handles: [] }); // no hallucinations by default
 });
 
 describe('generatePipelinePost', () => {
@@ -200,6 +204,48 @@ describe('generatePipelinePost', () => {
     expect(result.timing).toHaveProperty('selectTopics');
     expect(result.timing).toHaveProperty('generate');
     expect(result.timing).toHaveProperty('review');
+  });
+});
+
+describe('generatePipelinePost URL hallucination check', () => {
+  it('calls fixPost when post contains a hallucinated URL', async () => {
+    const badPost = VALID_POST + '\nПодробности: https://fake-hallucinated.example.com/article';
+    const fixedPost = VALID_POST;
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude
+      .mockResolvedValueOnce(badPost)   // generatePost returns post with hallucinated URL
+      .mockResolvedValueOnce(fixedPost); // fixPost removes it
+
+    mockFindHallucinated
+      .mockReturnValueOnce({ urls: ['https://fake-hallucinated.example.com/article'], handles: [] })
+      .mockReturnValueOnce({ urls: [], handles: [] }); // clean after fix
+
+    const result = await generatePipelinePost();
+
+    expect(result.success).toBe(true);
+    expect(result.post).toBe(fixedPost);
+    expect(result.timing).toHaveProperty('fix1');
+    expect(mockCallClaude).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns failure when hallucinated URLs persist after all fix attempts', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValue(VALID_POST);
+    mockFindHallucinated.mockReturnValue({
+      urls: ['https://still-fake.example.com'],
+      handles: [],
+    });
+
+    const result = await generatePipelinePost();
+
+    expect(result.success).toBe(false);
+    expect(result.errors?.some(e => e.includes('Hallucinated URL'))).toBe(true);
+    expect(result.timing).toHaveProperty('fix1');
+    expect(result.timing).toHaveProperty('fix2');
   });
 });
 
