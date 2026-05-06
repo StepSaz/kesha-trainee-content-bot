@@ -1,6 +1,7 @@
 import type { Config } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
-import { generatePipelinePost, extractIntro, formatSelectedTopics, type PipelineOptions, type PipelineResult } from '../../src/lib/pipeline.js';
+import { generatePipelinePost, extractIntro, type PipelineOptions, type PipelineResult } from '../../src/lib/pipeline.js';
+import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
 import { generateManagedPost } from '../../src/lib/managed-agent.js';
 import { sendToChannel } from '../../src/lib/telegram.js';
 
@@ -28,9 +29,9 @@ export default async (): Promise<Response> => {
     channel: cronChannel,
   });
 
-  const publishedTopics = (await store.get('published-topics', { type: 'json' }) as string[] | null) ?? [];
+  const memoryEntries = await loadMemory();
   const previousIntros = (await store.get('previous-intros', { type: 'json' }) as string[] | null) ?? [];
-  const pipelineOptions: PipelineOptions = { publishedTopics, previousIntros };
+  const pipelineOptions: PipelineOptions = { memoryEntries, previousIntros };
 
   try {
     async function run() {
@@ -103,14 +104,19 @@ export default async (): Promise<Response> => {
     console.log(`[kesha-post] posted! messageId=${sendResult.messageId}`);
 
     if (mode !== 'managed') {
-      const pipelineResult = result as PipelineResult;
-      const newTopics = [...publishedTopics, formatSelectedTopics(pipelineResult.selectedTopics)].slice(-4);
-      await store.setJSON('published-topics', newTopics);
+        const pipelineResult = result as PipelineResult;
+        const newEntries: MemoryEntry[] = pipelineResult.selectedTopics.topics.map(t => ({
+          url: t.sourceUrl,
+          title: t.title,
+          publishedAt: new Date().toISOString(),
+          postId: sendResult.messageId ?? null,
+        }));
+        await appendMemory(newEntries);
 
-      const newIntro = extractIntro(result.post!);
-      const newIntros = [...previousIntros, newIntro].slice(-10);
-      await store.setJSON('previous-intros', newIntros);
-    }
+        const newIntro = extractIntro(result.post!);
+        const newIntros = [...previousIntros, newIntro].slice(-10);
+        await store.setJSON('previous-intros', newIntros);
+      }
 
     return new Response('ok', { status: 200 });
   } catch (err) {
