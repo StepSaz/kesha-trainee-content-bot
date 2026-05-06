@@ -56,14 +56,16 @@ export function findCallbacks(newTitles: string[], memory: MemoryEntry[]): Memor
   const results: MemoryEntry[] = [];
 
   for (const entry of memory) {
-    const ageWeeks = (now - new Date(entry.publishedAt).getTime()) / MS_PER_WEEK;
+    const ts = new Date(entry.publishedAt).getTime();
+    if (Number.isNaN(ts)) continue;
+    const ageWeeks = (now - ts) / MS_PER_WEEK;
     if (ageWeeks < 2 || ageWeeks > 8) continue;
 
-    const entryWords = entry.title.toLowerCase().split(/\s+/).filter(w => w.length >= 5);
+    const entryWords = entry.title.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length >= 5);
     if (entryWords.length === 0) continue;
 
     const matched = newTitles.some(title => {
-      const titleWords = title.toLowerCase().split(/\s+/).filter(w => w.length >= 5);
+      const titleWords = title.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length >= 5);
       return titleWords.some(tw => entryWords.some(ew => ew.includes(tw) || tw.includes(ew)));
     });
 

@@ -108,6 +108,11 @@ describe('findCallbacks', () => {
     const entries: MemoryEntry[] = Array.from({ length: 5 }, (_, i) => ({
       url: '', title: `Claude release ${i}`, publishedAt: weeksAgo(3), postId: null,
     }));
-    expect(findCallbacks(['Claude update'], entries).length).toBeLessThanOrEqual(3);
+    expect(findCallbacks(['Claude update'], entries)).toHaveLength(3);
+  });
+
+  it('ignores entries with invalid publishedAt', () => {
+    const e: MemoryEntry = { url: '', title: 'OpenAI DevDay launch', publishedAt: 'not-a-date', postId: null };
+    expect(findCallbacks(['OpenAI announcement'], [e])).toEqual([]);
   });
 });
