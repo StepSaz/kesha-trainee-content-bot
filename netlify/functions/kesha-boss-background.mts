@@ -238,11 +238,17 @@ async function handleDigest(message: TelegramMessage): Promise<void> {
     return;
   }
 
+  const store = getStore('kesha');
+
+  const existingPending = await store.get('pending-digest');
+  if (existingPending) {
+    await sendMessage(chatId, '⚠️ Уже есть незавершённый дайджест. Сначала подтверди или отмени его.');
+    return;
+  }
+
   const progressResult = await sendMessage(chatId, '⏳ генерирую дайджест... (~60-90 сек)');
   if (!progressResult.success || !progressResult.messageId) return;
   const progressMessageId = progressResult.messageId;
-
-  const store = getStore('kesha');
 
   try {
     const memoryEntries = await loadMemory();
@@ -325,17 +331,19 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
     return;
   }
 
-  try {
-    const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map(t => ({
-      url: t.sourceUrl,
-      title: t.title,
-      publishedAt: new Date().toISOString(),
-      postId: sendResult.messageId ?? null,
-    }));
-    await appendMemory(newEntries);
-    await store.setJSON('previous-intros', pending.newIntros);
-  } catch (err) {
-    console.error('[boss] memory update failed after publish:', err);
+  if (data === 'digest_prod') {
+    try {
+      const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map(t => ({
+        url: t.sourceUrl,
+        title: t.title,
+        publishedAt: new Date().toISOString(),
+        postId: sendResult.messageId ?? null,
+      }));
+      await appendMemory(newEntries);
+      await store.setJSON('previous-intros', pending.newIntros);
+    } catch (err) {
+      console.error('[boss] memory update failed after publish:', err);
+    }
   }
 
   const label = data === 'digest_test' ? 'тест' : 'прод';
@@ -362,8 +370,9 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
 
   if (!message.text) return;
 
+  const chatId = String(message.chat.id);
   const store = getStore('kesha');
-  const rateKey = `comment-rate:${replyToId}`;
+  const rateKey = `comment-rate:${chatId}:${replyToId}`;
   const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
   const expiresAt = new Date(Date.now() + thirtyDaysMs).toISOString();
 
@@ -390,7 +399,6 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
     freeform: 'Степан написал комментарий к посту. Ответь по делу, в своём стиле стажёра.',
   };
 
-  const chatId = String(message.chat.id);
   try {
     const response = await callClaude({
       systemPrompt: 'Ты Кеша - стажёр-бот в Telegram-канале. Пишешь живо, по-русски, без официоза. Никаких em-dash (—), никакого markdown. Лаконично - не больше 3-4 предложений.',
