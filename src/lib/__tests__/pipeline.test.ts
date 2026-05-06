@@ -4,12 +4,17 @@ vi.mock('../claude.js', () => ({ callClaude: vi.fn(), callClaudeStructured: vi.f
 vi.mock('../sources.js', () => ({ fetchHackerNewsContext: vi.fn() }));
 vi.mock('../validator.js', () => ({ validatePost: vi.fn() }));
 vi.mock('../url-checker.js', () => ({ findHallucinated: vi.fn() }));
+vi.mock('../memory.js', () => ({
+  findCallbacks: vi.fn().mockReturnValue([]),
+}));
 
 import { generatePipelinePost, extractIntro, type SelectedTopics, type ReviewResult } from '../pipeline.js';
 import { callClaude, callClaudeStructured } from '../claude.js';
 import { fetchHackerNewsContext } from '../sources.js';
 import { validatePost } from '../validator.js';
 import { findHallucinated } from '../url-checker.js';
+import { findCallbacks } from '../memory.js';
+const mockFindCallbacks = vi.mocked(findCallbacks);
 
 const mockCallClaude = vi.mocked(callClaude);
 const mockCallClaudeStructured = vi.mocked(callClaudeStructured);
@@ -53,6 +58,7 @@ const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Н
 // Default: HN returns enough items to skip web search fallback (threshold=8 in sources.json)
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFindCallbacks.mockReturnValue([]);
   mockFetchHackerNewsContext.mockResolvedValue({ context: 'HN context', itemCount: 10 });
   mockValidatePost.mockReturnValue({ valid: true, errors: [] });
   mockFindHallucinated.mockReturnValue({ urls: [], handles: [] }); // no hallucinations by default
@@ -297,15 +303,18 @@ describe('generatePipelinePost web search fallback', () => {
   });
 });
 
-describe('generatePipelinePost with publishedTopics', () => {
-  it('injects dedup block into selectTopics system prompt when publishedTopics provided', async () => {
+describe('generatePipelinePost with memoryEntries', () => {
+  it('injects dedup block into selectTopics system prompt when memoryEntries provided', async () => {
     mockCallClaudeStructured
       .mockResolvedValueOnce(okTopics(3))
       .mockResolvedValueOnce(okReview);
     mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     await generatePipelinePost({
-      publishedTopics: ['1. OldTopic X (Anthropic)', '1. OldTopic Y (OpenAI)'],
+      memoryEntries: [
+        { url: 'https://example.com/x', title: 'OldTopic X', publishedAt: new Date().toISOString(), postId: null },
+        { url: 'https://example.com/y', title: 'OldTopic Y', publishedAt: new Date().toISOString(), postId: null },
+      ],
     });
 
     const selectCallParams = mockCallClaudeStructured.mock.calls[0][0];
@@ -313,13 +322,13 @@ describe('generatePipelinePost with publishedTopics', () => {
     expect(selectCallParams.systemPrompt).toContain('НЕ повторяй');
   });
 
-  it('does not add dedup block when publishedTopics is empty array', async () => {
+  it('does not add dedup block when memoryEntries is empty array', async () => {
     mockCallClaudeStructured
       .mockResolvedValueOnce(okTopics(1))
       .mockResolvedValueOnce(okReview);
     mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
-    await generatePipelinePost({ publishedTopics: [] });
+    await generatePipelinePost({ memoryEntries: [] });
 
     const selectCallParams = mockCallClaudeStructured.mock.calls[0][0];
     expect(selectCallParams.systemPrompt).not.toContain('НЕ повторяй');

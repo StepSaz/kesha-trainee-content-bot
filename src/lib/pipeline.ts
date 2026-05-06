@@ -4,6 +4,7 @@ import { callClaude, callClaudeStructured, type ToolDef } from './claude.js';
 import { fetchHackerNewsContext } from './sources.js';
 import { validatePost } from './validator.js';
 import { findHallucinated } from './url-checker.js';
+import { type MemoryEntry, findCallbacks } from './memory.js';
 
 function readConfig(filename: string): string {
   return readFileSync(join(process.cwd(), 'src/config', filename), 'utf-8');
@@ -62,8 +63,8 @@ export interface PipelineResult {
 }
 
 export interface PipelineOptions {
-  publishedTopics?: string[];  // selectedTopics strings from last 4 successful posts
-  previousIntros?: string[];   // extracted intro strings from last 10 posts
+  memoryEntries?: MemoryEntry[];
+  previousIntros?: string[];
 }
 
 export function extractIntro(post: string): string {
@@ -159,7 +160,7 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   }
 }
 
-async function selectTopics(hnContext: string, webContext: string, cfg: PipelineConfig, publishedTopics?: string[]): Promise<SelectedTopics> {
+async function selectTopics(hnContext: string, webContext: string, cfg: PipelineConfig, memoryEntries?: MemoryEntry[]): Promise<SelectedTopics> {
   const systemPrompt = `You are a content curator for a Russian-language Telegram channel about AI and tech. Audience: IT analysts, product managers, and a broad tech audience. Practical impact and ecosystem significance matter more than technical depth.
 
 Select topics using this tiered rubric:
@@ -196,10 +197,13 @@ SELECTION ALGORITHM - follow this sequence exactly:
 
   const userMessage = `Here is this week's content:\n\nHacker News digest:\n${hnContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. For each: topic name, source URL, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed.`;
 
-  const sliced = publishedTopics ? publishedTopics.slice(-4) : [];
-  const dedupBlock = sliced.length > 0
+  const recentMs = 8 * 7 * 24 * 60 * 60 * 1000;
+  const recent = (memoryEntries ?? []).filter(
+    e => Date.now() - new Date(e.publishedAt).getTime() < recentMs
+  );
+  const dedupBlock = recent.length > 0
     ? `\n\nТЕМЫ ИЗ ПОСЛЕДНИХ ПОСТОВ (НЕ повторяй эти же события - даже если они снова в фиде):\n${
-        sliced.map((t, i) => `--- Пост -${sliced.length - i} ---\n${t}`).join('\n')
+        recent.map(e => `- ${e.title}${e.url ? ` (${e.url})` : ''}`).join('\n')
       }\n\nПравила анти-дублирования:\n- Если новость о ТОМ ЖЕ событии (тот же продукт, тот же релиз, та же сделка) - пропусти.\n- Если есть ЗНАЧИМОЕ продолжение (новые цифры, реакция рынка, отозвали/расширили) - можно включить, но обозначь как развитие, не как анонс.\n- Если нет нового угла - пропусти, даже если событие крупное.`
     : '';
 
@@ -339,7 +343,7 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
 
     // Step 1: Select topics
     const t1 = Date.now();
-    const selectedTopics = await selectTopics(hnContext, webContext, cfg, options.publishedTopics);
+    const selectedTopics = await selectTopics(hnContext, webContext, cfg, options.memoryEntries);
     timing.selectTopics = Date.now() - t1;
     console.log(`[pipeline] topics selected in ${timing.selectTopics}ms`);
 
