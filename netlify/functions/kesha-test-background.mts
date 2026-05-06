@@ -1,6 +1,7 @@
 import type { Config } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
 import { generatePipelinePost, type PipelineResult, type PipelineOptions } from '../../src/lib/pipeline.js';
+import { loadMemory } from '../../src/lib/memory.js';
 import { generateManagedPost } from '../../src/lib/managed-agent.js';
 import { sendToChannel } from '../../src/lib/telegram.js';
 
@@ -41,15 +42,15 @@ export default async (req: Request): Promise<Response> => {
         sendResult,
       });
     } else {
-      const publishedTopics = (await store.get('published-topics', { type: 'json' }) as string[] | null) ?? [];
+      const memoryEntries = await loadMemory();
       const previousIntros = (await store.get('previous-intros', { type: 'json' }) as string[] | null) ?? [];
-      const testOptions: PipelineOptions = { publishedTopics, previousIntros };
+      const testOptions: PipelineOptions = { memoryEntries, previousIntros };
       const result: PipelineResult = await generatePipelinePost(testOptions);
       if (result.success && chatId) {
         sendResult = await sendToChannel(result.post!, chatId);
       }
 
-      const rewrote = !result.review.toLowerCase().startsWith('хорошо') && !!result.post && result.post !== result.draft;
+      const rewrote = result.review.verdict !== 'ok' && !!result.post && result.post !== result.draft;
 
       await store.setJSON('latest-result', {
         status: result.success ? 'ok' : 'failed',
@@ -62,7 +63,7 @@ export default async (req: Request): Promise<Response> => {
         selectedTopics: result.selectedTopics,
         draft: result.draft,
         review: result.review,
-        reviewVerdict: result.review.split('\n')[0].trim(),
+        reviewVerdict: result.review.verdict,
         rewrote,
         post: result.post,
         errors: result.errors,

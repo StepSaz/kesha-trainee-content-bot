@@ -3,58 +3,80 @@ export interface ValidationResult {
   errors: string[];
 }
 
-export function validatePost(text: string): ValidationResult {
-  const errors: string[] = [];
+type Rule = (text: string) => string | null;
 
-  const hasBot = /БОТ/.test(text);
-  const hasLearning = /УЧУСЬ/.test(text);
+const noEmDash: Rule = (t) =>
+  t.includes('—') ? 'Contains em-dash (—), use hyphen instead' : null;
 
-  if (!hasBot && !hasLearning) {
-    errors.push('Missing bot disclaimer (БОТ or УЧУСЬ in caps)');
+const noMarkdown: Rule = (t) =>
+  /\*\*|##|```/.test(t) ? 'Contains markdown formatting (**, ##, ```)' : null;
+
+const maxLength = (limit: number): Rule => (t) =>
+  t.length > limit ? `Post too long: ${t.length} chars (max ${limit})` : null;
+
+const chickenDistance = (minChars: number): Rule => (t) => {
+  const idx: number[] = [];
+  let i = -1;
+  while ((i = t.indexOf('🐤', i + 1)) !== -1) idx.push(i);
+  for (let k = 1; k < idx.length; k++) {
+    const gap = idx[k] - idx[k - 1];
+    if (gap < minChars) return `Two 🐤 too close: ${gap} chars apart (min ${minChars})`;
   }
+  return null;
+};
 
-  if (!text.includes('Кеша')) {
-    errors.push('Missing "Кеша" in text');
-  }
+const requireDisclaimer: Rule = (t) =>
+  /БОТ|УЧУСЬ/.test(t) ? null : 'Missing bot disclaimer (БОТ or УЧУСЬ in caps)';
 
-  if (!text.includes('🐤')) {
-    errors.push('Missing 🐤 emoji');
-  }
+const requireKesha: Rule = (t) =>
+  t.includes('Кеша') ? null : 'Missing "Кеша" in text';
 
-  if (text.includes('\u2014')) {
-    errors.push('Contains em-dash (—), use hyphen instead');
-  }
+const requireChicken: Rule = (t) =>
+  t.includes('🐤') ? null : 'Missing 🐤 emoji';
 
-  if (/\*\*|##|```/.test(text)) {
-    errors.push('Contains markdown formatting (**, ##, ```)');
-  }
+const requireSourceMarkers = (min: number): Rule => (t) => {
+  const count = (t.match(/📎/g) ?? []).length;
+  return count < min
+    ? `Too few news items: ${count} source(s) found (min ${min} required)`
+    : null;
+};
 
-  if (text.length > 4000) {
-    errors.push(`Post too long: ${text.length} chars (max 4000)`);
-  }
-
-  const sourceCount = (text.match(/📎/g) ?? []).length;
-  if (sourceCount < 3) {
-    errors.push(`Too few news items: ${sourceCount} source(s) found (min 3 required)`);
-  }
-
-  return { valid: errors.length === 0, errors };
+function compose(...rules: Rule[]): (text: string) => ValidationResult {
+  return (text) => {
+    const errors = rules
+      .map((r) => r(text))
+      .filter((e): e is string => e !== null);
+    return { valid: errors.length === 0, errors };
+  };
 }
 
-export function validateBossPost(text: string): ValidationResult {
-  const errors: string[] = [];
+export const validateWeekly = compose(
+  requireDisclaimer,
+  requireKesha,
+  requireChicken,
+  noEmDash,
+  noMarkdown,
+  maxLength(4000),
+  requireSourceMarkers(3),
+  chickenDistance(500),
+);
 
-  if (text.length > 4096) {
-    errors.push(`Post too long: ${text.length} chars (max 4096)`);
-  }
+export const validateBoss = compose(
+  noEmDash,
+  noMarkdown,
+  maxLength(4096),
+);
 
-  if (text.includes('\u2014')) {
-    errors.push('Contains em-dash (—), use hyphen instead');
-  }
+export const validateStream = compose(
+  requireDisclaimer,
+  requireKesha,
+  requireChicken,
+  noEmDash,
+  noMarkdown,
+  maxLength(4000),
+  chickenDistance(500),
+);
 
-  if (/\*\*|##|```/.test(text)) {
-    errors.push('Contains markdown formatting (**, ##, ```)');
-  }
-
-  return { valid: errors.length === 0, errors };
-}
+// Backward-compat aliases — existing callers keep working.
+export const validatePost = validateWeekly;
+export const validateBossPost = validateBoss;

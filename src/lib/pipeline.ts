@@ -1,8 +1,10 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { callClaude } from './claude.js';
-import { fetchHackerNewsContext } from './hackernews.js';
+import { callClaude, callClaudeStructured, type ToolDef } from './claude.js';
+import { fetchHackerNewsContext } from './sources.js';
 import { validatePost } from './validator.js';
+import { findHallucinated } from './url-checker.js';
+import { type MemoryEntry, findCallbacks } from './memory.js';
 
 function readConfig(filename: string): string {
   return readFileSync(join(process.cwd(), 'src/config', filename), 'utf-8');
@@ -24,27 +26,109 @@ interface SourcesConfig {
   hackernews_api?: { fallback_threshold?: number };
 }
 
+export interface SelectedTopic {
+  title: string;
+  summary: string;
+  sourceUrl: string;
+  sourceOrigin: 'hn' | 'web';
+  tier: 1 | 2 | 3;
+}
+
+export interface SelectedTopics {
+  topics: SelectedTopic[];
+  sparseWeek: boolean;
+}
+
+export interface ReviewNote {
+  issue: string;
+  quote?: string;
+  suggestion?: string;
+}
+
+export interface ReviewResult {
+  verdict: 'ok' | 'minor' | 'rework';
+  notes: ReviewNote[];
+}
+
 export interface PipelineResult {
   success: boolean;
   post?: string;
   hnContext: string;
   webContext: string;
-  selectedTopics: string;
+  selectedTopics: SelectedTopics;
   draft: string;
-  review: string;
+  review: ReviewResult;
   errors?: string[];
   timing: Record<string, number>;
 }
 
 export interface PipelineOptions {
-  publishedTopics?: string[];  // selectedTopics strings from last 4 successful posts
-  previousIntros?: string[];   // extracted intro strings from last 10 posts
+  memoryEntries?: MemoryEntry[];
+  previousIntros?: string[];
 }
 
 export function extractIntro(post: string): string {
   const sep = post.indexOf('~ ~ ~');
   return (sep === -1 ? post.slice(0, 500) : post.slice(0, sep)).trim();
 }
+
+export function formatSelectedTopics(t: SelectedTopics): string {
+  const lines = t.topics
+    .map((topic, i) =>
+      `${i + 1}. ${topic.title}\n   источник: ${topic.sourceUrl}\n   ${topic.summary}`)
+    .join('\n\n');
+  return t.sparseWeek ? `${lines}\n\nSPARSE_WEEK` : lines;
+}
+
+const selectTopicsTool: ToolDef = {
+  name: 'select_topics',
+  description: 'Return the curated list of topics for the weekly digest.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      topics: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Краткое название темы' },
+            summary: { type: 'string', description: '1-2 предложения почему интересно для аналитиков/PMs (на русском)' },
+            sourceUrl: { type: 'string', description: 'URL источника или telegram handle с @' },
+            sourceOrigin: { type: 'string', enum: ['hn', 'web'] },
+            tier: { type: 'integer', enum: [1, 2, 3] },
+          },
+          required: ['title', 'summary', 'sourceUrl', 'sourceOrigin', 'tier'],
+        },
+      },
+      sparseWeek: { type: 'boolean', description: 'true ONLY if exactly 3 topics' },
+    },
+    required: ['topics', 'sparseWeek'],
+  },
+};
+
+const reviewPostTool: ToolDef = {
+  name: 'review_post',
+  description: 'Return the mechanical review verdict for a Kesha post.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      verdict: { type: 'string', enum: ['ok', 'minor', 'rework'] },
+      notes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            issue: { type: 'string', description: 'Суть проблемы одной строкой' },
+            quote: { type: 'string', description: 'Цитата из текста, если речь о конкретной фразе' },
+            suggestion: { type: 'string', description: 'Что заменить и на что' },
+          },
+          required: ['issue'],
+        },
+      },
+    },
+    required: ['verdict', 'notes'],
+  },
+};
 
 async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   const sources = JSON.parse(readConfig('sources.json')) as SourcesConfig;
@@ -76,7 +160,7 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
   }
 }
 
-async function selectTopics(hnContext: string, webContext: string, cfg: PipelineConfig, publishedTopics?: string[]): Promise<string> {
+async function selectTopics(hnContext: string, webContext: string, cfg: PipelineConfig, memoryEntries?: MemoryEntry[]): Promise<SelectedTopics> {
   const systemPrompt = `You are a content curator for a Russian-language Telegram channel about AI and tech. Audience: IT analysts, product managers, and a broad tech audience. Practical impact and ecosystem significance matter more than technical depth.
 
 Select topics using this tiered rubric:
@@ -109,35 +193,40 @@ SELECTION ALGORITHM - follow this sequence exactly:
    new model launch > major product launch > strategic partnership/funding > infrastructure/tooling > pricing change.
 2. Fill up to 5 topics by adding the best Tier 2 candidates.
 3. If total is still fewer than 3, add the best available from Tier 3.
-4. If final total is exactly 3, append SPARSE_WEEK on its own line at the very end.
-5. Count your numbered topics. If the count is 3, append SPARSE_WEEK. If the count is 4 or 5, stop - do not append SPARSE_WEEK.`;
+4. Set sparseWeek=true if and only if you returned exactly 3 topics. Otherwise sparseWeek=false.`;
 
-  const userMessage = `Here is this week's content:\n\nHacker News digest:\n${hnContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. Number each topic (1. 2. 3. etc). For each: topic name, source, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed. SPARSE_WEEK only if exactly 3 topics total - and if so, it must be the very last word in your response with nothing after it.`;
+  const userMessage = `Here is this week's content:\n\nHacker News digest:\n${hnContext}\n\nWeb search findings:\n${webContext}\n\nSelect 3-5 topics using the tiered rubric. For each: topic name, source URL, and why it is interesting for IT analysts/PMs (1-2 sentences in Russian). Follow the selection algorithm - Tier 1 first, then Tier 2, Tier 3 only if needed.`;
 
-  const sliced = publishedTopics ? publishedTopics.slice(-4) : [];
-  const dedupBlock = sliced.length > 0
+  const DEDUP_WINDOW_MS = 8 * 7 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const recent = (memoryEntries ?? []).filter(e => {
+    const t = new Date(e.publishedAt).getTime();
+    if (Number.isNaN(t)) return false;
+    return now - t < DEDUP_WINDOW_MS;
+  });
+  const dedupBlock = recent.length > 0
     ? `\n\nТЕМЫ ИЗ ПОСЛЕДНИХ ПОСТОВ (НЕ повторяй эти же события - даже если они снова в фиде):\n${
-        sliced.map((t, i) => `--- Пост -${sliced.length - i} ---\n${t}`).join('\n')
+        recent.map(e => `- ${e.title}${e.url ? ` (${e.url})` : ''}`).join('\n')
       }\n\nПравила анти-дублирования:\n- Если новость о ТОМ ЖЕ событии (тот же продукт, тот же релиз, та же сделка) - пропусти.\n- Если есть ЗНАЧИМОЕ продолжение (новые цифры, реакция рынка, отозвали/расширили) - можно включить, но обозначь как развитие, не как анонс.\n- Если нет нового угла - пропусти, даже если событие крупное.`
     : '';
 
-  return callClaude({
+  return callClaudeStructured<SelectedTopics>({
     systemPrompt: systemPrompt + dedupBlock,
     userMessage,
     model: cfg.steps.selectTopics.model,
     temperature: cfg.steps.selectTopics.temperature,
     maxTokens: cfg.steps.selectTopics.max_tokens,
-    tools: cfg.steps.selectTopics.tools,
+    tool: selectTopicsTool,
   });
 }
 
 async function generatePost(
   hnContext: string,
   webContext: string,
-  selectedTopics: string,
-  topicCount: number,
+  selectedTopics: SelectedTopics,
   cfg: PipelineConfig,
-  previousIntros?: string[]
+  previousIntros?: string[],
+  memoryEntries?: MemoryEntry[]
 ): Promise<string> {
   const persona = readConfig('kesha-persona.txt');
   const now = new Date();
@@ -150,7 +239,12 @@ async function generatePost(
     timeZone: 'Europe/Warsaw',
   });
 
-  const isSparseWeek = selectedTopics.includes('SPARSE_WEEK');
+  const isSparseWeek = selectedTopics.sparseWeek;
+  const topicCount = selectedTopics.topics.length;
+  const topicsProse = selectedTopics.topics
+    .map((t, i) => `${i + 1}. ${t.title} (${t.sourceUrl}) — ${t.summary}`)
+    .join('\n');
+
   const sparseNote = isSparseWeek
     ? '\n\nВНИМАНИЕ: эта неделя небогатая (SPARSE_WEEK) - нашлось только 3 темы вместо обычных 4-5. Напиши пост на 3 темы и добавь естественную реплику от Кеши о том, что на этой неделе маловато, например: «Честно, неделя небогатая - нашёл всего три темы, но они стоящие».'
     : '';
@@ -162,9 +256,30 @@ async function generatePost(
       }`
     : '';
 
+  const callbackMatches = findCallbacks(
+    selectedTopics.topics.map(t => t.title),
+    memoryEntries ?? []
+  );
+  const callbackBlock = callbackMatches.length > 0
+    ? `\n\nCALLBACK CONTEXT (используй по желанию — только если органично вписывается в пост):\n${
+        callbackMatches.map(e => {
+          const n = Math.floor(
+            (Date.now() - new Date(e.publishedAt).getTime()) / (7 * 24 * 60 * 60 * 1000)
+          );
+          const mod10 = n % 10;
+          const mod100 = n % 100;
+          let ago: string;
+          if (mod10 === 1 && mod100 !== 11) ago = `${n} неделю`;
+          else if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) ago = `${n} недели`;
+          else ago = `${n} недель`;
+          return `- "${e.title}" упоминался ${ago} назад — можно сослаться как на развитие истории`;
+        }).join('\n')
+      }`
+    : '';
+
   return callClaude({
     systemPrompt: persona,
-    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${selectedTopics}${sparseNote}${topicNote}${introsBlock}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
+    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${topicsProse}${sparseNote}${topicNote}${introsBlock}${callbackBlock}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
     model: cfg.steps.generate.model,
     temperature: cfg.steps.generate.temperature,
     maxTokens: cfg.steps.generate.max_tokens,
@@ -172,25 +287,26 @@ async function generatePost(
   });
 }
 
-async function reviewPost(draft: string, cfg: PipelineConfig): Promise<string> {
+async function reviewPost(draft: string, cfg: PipelineConfig): Promise<ReviewResult> {
   const reviewer = readConfig('kesha-reviewer.txt');
 
-  return callClaude({
+  return callClaudeStructured<ReviewResult>({
     systemPrompt: reviewer,
     userMessage: draft,
     model: cfg.steps.review.model,
     temperature: cfg.steps.review.temperature,
     maxTokens: cfg.steps.review.max_tokens,
-    tools: cfg.steps.review.tools,
+    tool: reviewPostTool,
   });
 }
 
-async function rewritePost(draft: string, review: string, cfg: PipelineConfig): Promise<string> {
+async function rewritePost(draft: string, review: ReviewResult, cfg: PipelineConfig): Promise<string> {
   const persona = readConfig('kesha-persona.txt');
+  const reviewText = review.notes.map(n => `- ${n.issue}${n.quote ? ` (цитата: "${n.quote}")` : ''}${n.suggestion ? ` → ${n.suggestion}` : ''}`).join('\n');
 
   return callClaude({
     systemPrompt: persona,
-    userMessage: `Вот черновик поста:\n\n${draft}\n\nВот фидбек редактора:\n\n${review}\n\nПерепиши пост с учётом замечаний. Сохрани голос и характер Кеши.`,
+    userMessage: `Вот черновик поста:\n\n${draft}\n\nВот фидбек редактора:\n\n${reviewText}\n\nПерепиши пост с учётом замечаний. Сохрани голос и характер Кеши.`,
     model: cfg.steps.rewrite.model,
     temperature: cfg.steps.rewrite.temperature,
     maxTokens: cfg.steps.rewrite.max_tokens,
@@ -211,6 +327,9 @@ async function fixPost(post: string, errors: string[], cfg: PipelineConfig): Pro
     tools: cfg.steps.fix.tools,
   });
 }
+
+const EMPTY_TOPICS: SelectedTopics = { topics: [], sparseWeek: false };
+const OK_REVIEW: ReviewResult = { verdict: 'ok', notes: [] };
 
 export async function generatePipelinePost(options: PipelineOptions = {}): Promise<PipelineResult> {
   const cfg = JSON.parse(readConfig('pipeline.json')) as PipelineConfig;
@@ -249,22 +368,19 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
 
     // Step 1: Select topics
     const t1 = Date.now();
-    const rawTopics = await selectTopics(hnContext, webContext, cfg, options.publishedTopics);
+    const selectedTopics = await selectTopics(hnContext, webContext, cfg, options.memoryEntries);
     timing.selectTopics = Date.now() - t1;
     console.log(`[pipeline] topics selected in ${timing.selectTopics}ms`);
 
-    // Guard: strip SPARSE_WEEK if 4+ numbered topics found (LLM hallucination safeguard)
-    const topicCount = (rawTopics.match(/^\d+\./gm) ?? []).length;
-    const selectedTopics = topicCount >= 4
-      ? rawTopics.replace(/\n?SPARSE_WEEK\s*$/, '').trim()
-      : rawTopics;
-    if (topicCount >= 4 && rawTopics.includes('SPARSE_WEEK')) {
-      console.log(`[pipeline] stripped false SPARSE_WEEK (found ${topicCount} topics)`);
+    // Guard: strip sparseWeek if 4+ topics returned (model hallucination safeguard)
+    if (selectedTopics.topics.length >= 4 && selectedTopics.sparseWeek) {
+      console.log(`[pipeline] stripped false sparseWeek (found ${selectedTopics.topics.length} topics)`);
+      selectedTopics.sparseWeek = false;
     }
 
     // Step 2: Generate
     const t2 = Date.now();
-    const draft = await generatePost(hnContext, webContext, selectedTopics, topicCount, cfg, options.previousIntros);
+    const draft = await generatePost(hnContext, webContext, selectedTopics, cfg, options.previousIntros, options.memoryEntries);
     timing.generate = Date.now() - t2;
     console.log(`[pipeline] post generated in ${timing.generate}ms`);
 
@@ -274,40 +390,50 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
     timing.review = Date.now() - t3;
     console.log(`[pipeline] review done in ${timing.review}ms`);
 
-    // Step 4: Rewrite only on "нужна переработка"; skip for "хорошо" and "нормально"
+    // Step 4: Rewrite only on "rework"; skip for "ok" and "minor"
     let finalPost = draft;
-    const reviewVerdict = review.trim().toLowerCase();
-    if (reviewVerdict.startsWith('нужна переработка')) {
+    if (review.verdict === 'rework') {
       const t4 = Date.now();
       finalPost = await rewritePost(draft, review, cfg);
       timing.rewrite = Date.now() - t4;
       console.log(`[pipeline] rewrite done in ${timing.rewrite}ms`);
     } else {
-      console.log(`[pipeline] review: ${reviewVerdict.split('\n')[0]} — skipping rewrite`);
+      console.log(`[pipeline] review: ${review.verdict} — skipping rewrite`);
     }
 
-    // Validate and auto-fix if needed (up to 2 attempts)
+    // Validate + hallucination-check and auto-fix if needed (up to 2 attempts)
     const MAX_FIX_ATTEMPTS = 2;
-    let validation = validatePost(finalPost);
 
-    for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS && !validation.valid; attempt++) {
-      console.log(`[pipeline] validation failed (attempt ${attempt + 1}): ${validation.errors.join(', ')}`);
+    const collectErrors = (post: string): string[] => {
+      const structural = validatePost(post).errors;
+      const hallucinated = findHallucinated(post, [hnContext, webContext]);
+      const urlErrors = hallucinated.urls.map(
+        u => `Hallucinated URL not found in sources: ${u} — replace with a real URL from the provided context`,
+      );
+      return [...structural, ...urlErrors];
+    };
+
+    let postErrors = collectErrors(finalPost);
+
+    for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS && postErrors.length > 0; attempt++) {
+      console.log(`[pipeline] fix (attempt ${attempt + 1}): ${postErrors.join('; ')}`);
       const tFix = Date.now();
-      finalPost = await fixPost(finalPost, validation.errors, cfg);
+      finalPost = await fixPost(finalPost, postErrors, cfg);
       timing[`fix${attempt + 1}`] = Date.now() - tFix;
       console.log(`[pipeline] fix attempt ${attempt + 1} done in ${timing[`fix${attempt + 1}`]}ms`);
-      validation = validatePost(finalPost);
+      postErrors = collectErrors(finalPost);
     }
 
+    const success = postErrors.length === 0;
     return {
-      success: validation.valid,
-      post: validation.valid ? finalPost : undefined,
+      success,
+      post: success ? finalPost : undefined,
       hnContext,
       webContext,
       selectedTopics,
       draft,
       review,
-      errors: validation.valid ? undefined : validation.errors,
+      errors: success ? undefined : postErrors,
       timing,
     };
   } catch (err) {
@@ -316,9 +442,9 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
       success: false,
       hnContext: '',
       webContext: '',
-      selectedTopics: '',
+      selectedTopics: EMPTY_TOPICS,
       draft: '',
-      review: '',
+      review: OK_REVIEW,
       errors: [err instanceof Error ? err.message : String(err)],
       timing,
     };

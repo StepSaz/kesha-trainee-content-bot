@@ -10,14 +10,10 @@
     ]
   },
   "priority_sources": [
-    "TechCrunch AI news",
-    "The Verge AI",
-    "Anthropic blog",
-    "OpenAI blog",
-    "Google AI blog",
-    "Hacker News top stories",
-    "Product Hunt new AI tools",
-    "Habr AI articles"
+    "https://www.anthropic.com/news.rss",
+    "https://openai.com/news/rss.xml",
+    "https://techcrunch.com/tag/artificial-intelligence/feed/",
+    "https://blog.google/technology/ai/rss/"
   ],
   "search_queries": [
     "AI news this week",

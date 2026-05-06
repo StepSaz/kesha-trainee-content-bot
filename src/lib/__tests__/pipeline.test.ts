@@ -1,69 +1,123 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../claude.js', () => ({ callClaude: vi.fn() }));
-vi.mock('../hackernews.js', () => ({ fetchHackerNewsContext: vi.fn() }));
+vi.mock('../claude.js', () => ({ callClaude: vi.fn(), callClaudeStructured: vi.fn() }));
+vi.mock('../sources.js', () => ({ fetchHackerNewsContext: vi.fn() }));
 vi.mock('../validator.js', () => ({ validatePost: vi.fn() }));
+vi.mock('../url-checker.js', () => ({ findHallucinated: vi.fn() }));
+vi.mock('../memory.js', () => ({
+  findCallbacks: vi.fn().mockReturnValue([]),
+}));
 
-import { generatePipelinePost, extractIntro } from '../pipeline.js';
-import { callClaude } from '../claude.js';
-import { fetchHackerNewsContext } from '../hackernews.js';
+import { generatePipelinePost, extractIntro, type SelectedTopics, type ReviewResult } from '../pipeline.js';
+import { callClaude, callClaudeStructured } from '../claude.js';
+import { fetchHackerNewsContext } from '../sources.js';
 import { validatePost } from '../validator.js';
+import { findHallucinated } from '../url-checker.js';
+import { findCallbacks } from '../memory.js';
+const mockFindCallbacks = vi.mocked(findCallbacks);
 
 const mockCallClaude = vi.mocked(callClaude);
+const mockCallClaudeStructured = vi.mocked(callClaudeStructured);
 const mockFetchHackerNewsContext = vi.mocked(fetchHackerNewsContext);
 const mockValidatePost = vi.mocked(validatePost);
+const mockFindHallucinated = vi.mocked(findHallucinated);
 
-const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Не бейте. 🐤
+// A single SelectedTopic helper
+const topic = (title = 'A'): SelectedTopics['topics'][0] => ({
+  title, summary: 's', sourceUrl: 'https://u', sourceOrigin: 'hn', tier: 1,
+});
+
+const okTopics = (n = 1): SelectedTopics => ({
+  topics: Array.from({ length: n }, (_, i) => topic(`Topic ${i + 1}`)),
+  sparseWeek: false,
+});
+
+const okReview: ReviewResult = { verdict: 'ok', notes: [] };
+
+const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Не бейте.
 
 Кеша на проводе🐤
 
-Тестовый пост.`;
+Новость первая: Anthropic обновила Claude - новая версия с улучшенными возможностями рассуждения и более точным следованием инструкциям. Разработчики отметили рост точности на сложных задачах.
+📎 источник: https://example.com/1
+
+~ ~ ~
+
+Новость вторая: Anthropic выпустила API-обновление с поддержкой tool use в режиме streaming. Для разработчиков это открывает новые сценарии использования в real-time приложениях.
+📎 источник: https://example.com/2
+
+~ ~ ~
+
+Новость третья: Cursor добавил Claude как основного AI-ассистента в свой редактор. Инструмент показывает стабильный рост и набрал более миллиона активных пользователей за квартал.
+📎 источник: https://example.com/3
+
+~ ~ ~
+
+Ваш стажер-Кеша @st_szs 🐤`;
 
 // Default: HN returns enough items to skip web search fallback (threshold=8 in sources.json)
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFindCallbacks.mockReturnValue([]);
   mockFetchHackerNewsContext.mockResolvedValue({ context: 'HN context', itemCount: 10 });
   mockValidatePost.mockReturnValue({ valid: true, errors: [] });
+  mockFindHallucinated.mockReturnValue({ urls: [], handles: [] }); // no hallucinations by default
 });
 
 describe('generatePipelinePost', () => {
-  it('returns success with post when review says хорошо (skips rewrite)', async () => {
-    mockCallClaude
-      .mockResolvedValueOnce('topic 1, topic 2')   // selectTopics
-      .mockResolvedValueOnce(VALID_POST)            // generatePost
-      .mockResolvedValueOnce('хорошо\n\nВсё отлично!'); // reviewPost
+  it('returns success with post when review is ok (skips rewrite)', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     const result = await generatePipelinePost();
 
     expect(result.success).toBe(true);
     expect(result.post).toBe(VALID_POST);
-    expect(mockCallClaude).toHaveBeenCalledTimes(3); // no web search, no rewrite
+    expect(mockCallClaude).toHaveBeenCalledTimes(1);       // generate only
+    expect(mockCallClaudeStructured).toHaveBeenCalledTimes(2); // select + review
     expect(result.timing).not.toHaveProperty('rewrite');
   });
 
-  it('calls rewrite when review does not start with хорошо', async () => {
+  it('calls rewrite when review verdict is rework', async () => {
     const rewrittenPost = VALID_POST + ' (rewritten)';
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce({ verdict: 'rework', notes: [{ issue: 'Фраза X звучит generic.' }] } satisfies ReviewResult);
     mockCallClaude
-      .mockResolvedValueOnce('topic 1')
       .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('нужна переработка\n\nФраза X звучит generic.')
       .mockResolvedValueOnce(rewrittenPost);
 
     const result = await generatePipelinePost();
 
-    expect(mockCallClaude).toHaveBeenCalledTimes(4);
+    expect(mockCallClaude).toHaveBeenCalledTimes(2);
+    expect(mockCallClaudeStructured).toHaveBeenCalledTimes(2);
     expect(result.draft).toBe(VALID_POST);
     expect(result.post).toBe(rewrittenPost);
     expect(result.timing).toHaveProperty('rewrite');
   });
 
+  it('skips rewrite when review verdict is minor', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce({ verdict: 'minor', notes: [{ issue: 'Небольшое замечание' }] } satisfies ReviewResult);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
+
+    const result = await generatePipelinePost();
+
+    expect(result.post).toBe(VALID_POST);
+    expect(result.timing).not.toHaveProperty('rewrite');
+  });
+
   it('auto-fixes post when validation fails on first attempt', async () => {
     const fixedPost = VALID_POST + ' (fixed)';
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
     mockCallClaude
-      .mockResolvedValueOnce('topics')
       .mockResolvedValueOnce('too long post')
-      .mockResolvedValueOnce('хорошо')
-      .mockResolvedValueOnce(fixedPost); // fixPost call
+      .mockResolvedValueOnce(fixedPost);
 
     mockValidatePost
       .mockReturnValueOnce({ valid: false, errors: ['Post too long: 4029 chars (max 4000)'] })
@@ -74,10 +128,14 @@ describe('generatePipelinePost', () => {
     expect(result.success).toBe(true);
     expect(result.post).toBe(fixedPost);
     expect(result.timing).toHaveProperty('fix1');
-    expect(mockCallClaude).toHaveBeenCalledTimes(4);
+    expect(mockCallClaude).toHaveBeenCalledTimes(2);
+    expect(mockCallClaudeStructured).toHaveBeenCalledTimes(2);
   });
 
   it('returns failure with errors when validation fails after all fix attempts', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
     mockCallClaude.mockResolvedValue('some text');
     mockValidatePost.mockReturnValue({ valid: false, errors: ['Missing 🐤 emoji'] });
 
@@ -91,53 +149,60 @@ describe('generatePipelinePost', () => {
   });
 
   it('exposes hnContext, webContext, selectedTopics in result', async () => {
-    mockCallClaude
-      .mockResolvedValueOnce('topics')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     const result = await generatePipelinePost();
 
     expect(result.hnContext).toBe('HN context');
     expect(result.webContext).toBe(''); // HN above threshold → web skipped
-    expect(result.selectedTopics).toBe('topics');
+    expect(result.selectedTopics).toMatchObject({ topics: expect.any(Array), sparseWeek: false });
   });
 
-  it('strips false SPARSE_WEEK when 4+ numbered topics are present', async () => {
-    const falseSparseTopic = '1. Topic A\n2. Topic B\n3. Topic C\n4. Topic D\nSPARSE_WEEK';
-    mockCallClaude
-      .mockResolvedValueOnce(falseSparseTopic)
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+  it('strips false sparseWeek when 4+ topics returned by model', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce({
+        topics: [
+          topic('A'), topic('B'), topic('C'), topic('D'),
+        ],
+        sparseWeek: true,
+      } satisfies SelectedTopics)
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     const result = await generatePipelinePost();
 
-    const generateCall = mockCallClaude.mock.calls[1];
+    expect(result.selectedTopics.sparseWeek).toBe(false);
+
+    const generateCall = mockCallClaude.mock.calls[0];
     const userMessage = generateCall[0].userMessage as string;
-    expect(userMessage).not.toContain('SPARSE_WEEK');
-    expect(result.selectedTopics).not.toContain('SPARSE_WEEK');
+    expect(userMessage).not.toContain('ВНИМАНИЕ: эта неделя небогатая');
   });
 
-  it('passes SPARSE_WEEK hint to generatePost when selectTopics includes it', async () => {
-    const sparseTopics = 'Topic 1\nTopic 2\nSPARSE_WEEK';
-    mockCallClaude
-      .mockResolvedValueOnce(sparseTopics)
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+  it('passes sparse week note to generatePost when sparseWeek is true', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce({
+        topics: [topic('A'), topic('B'), topic('C')],
+        sparseWeek: true,
+      } satisfies SelectedTopics)
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     await generatePipelinePost();
 
-    const generateCall = mockCallClaude.mock.calls[1];
+    const generateCall = mockCallClaude.mock.calls[0];
     const userMessage = generateCall[0].userMessage as string;
-    expect(userMessage).toContain('SPARSE_WEEK');
+    expect(userMessage).toContain('ВНИМАНИЕ: эта неделя небогатая');
     expect(userMessage).toContain('3 темы');
   });
 
   it('includes timing keys for each step', async () => {
-    mockCallClaude
-      .mockResolvedValueOnce('topics')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     const result = await generatePipelinePost();
 
@@ -148,119 +213,224 @@ describe('generatePipelinePost', () => {
   });
 });
 
+describe('generatePipelinePost URL hallucination check', () => {
+  it('calls fixPost when post contains a hallucinated URL', async () => {
+    const badPost = VALID_POST + '\nПодробности: https://fake-hallucinated.example.com/article';
+    const fixedPost = VALID_POST;
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude
+      .mockResolvedValueOnce(badPost)   // generatePost returns post with hallucinated URL
+      .mockResolvedValueOnce(fixedPost); // fixPost removes it
+
+    mockFindHallucinated
+      .mockReturnValueOnce({ urls: ['https://fake-hallucinated.example.com/article'], handles: [] })
+      .mockReturnValueOnce({ urls: [], handles: [] }); // clean after fix
+
+    const result = await generatePipelinePost();
+
+    expect(result.success).toBe(true);
+    expect(result.post).toBe(fixedPost);
+    expect(result.timing).toHaveProperty('fix1');
+    expect(mockCallClaude).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns failure when hallucinated URLs persist after all fix attempts', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValue(VALID_POST);
+    mockFindHallucinated.mockReturnValue({
+      urls: ['https://still-fake.example.com'],
+      handles: [],
+    });
+
+    const result = await generatePipelinePost();
+
+    expect(result.success).toBe(false);
+    expect(result.errors?.some(e => e.includes('Hallucinated URL'))).toBe(true);
+    expect(result.timing).toHaveProperty('fix1');
+    expect(result.timing).toHaveProperty('fix2');
+  });
+});
+
 describe('generatePipelinePost web search fallback', () => {
   it('skips web search when HN returns enough items', async () => {
     mockFetchHackerNewsContext.mockResolvedValue({ context: 'HN ctx', itemCount: 10 });
-    mockCallClaude
-      .mockResolvedValueOnce('topics')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     const result = await generatePipelinePost();
 
     expect(result.webContext).toBe('');
-    // 3 calls = selectTopics + generate + review (no web search, no rewrite)
-    expect(mockCallClaude).toHaveBeenCalledTimes(3);
+    expect(mockCallClaude).toHaveBeenCalledTimes(1);       // generate only
+    expect(mockCallClaudeStructured).toHaveBeenCalledTimes(2);
   });
 
   it('runs web search when HN throws (API unavailable)', async () => {
     mockFetchHackerNewsContext.mockRejectedValue(new Error('API down'));
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
     mockCallClaude
       .mockResolvedValueOnce('web fallback findings') // fetchWebContext
-      .mockResolvedValueOnce('topics')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+      .mockResolvedValueOnce(VALID_POST);             // generatePost
 
     const result = await generatePipelinePost();
 
     expect(result.hnContext).toBe('');
     expect(result.webContext).toBe('web fallback findings');
-    expect(mockCallClaude).toHaveBeenCalledTimes(4);
+    expect(mockCallClaude).toHaveBeenCalledTimes(2);
   });
 
   it('runs web search when HN itemCount is below threshold (sparse week)', async () => {
     mockFetchHackerNewsContext.mockResolvedValue({ context: 'sparse HN ctx', itemCount: 3 });
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
     mockCallClaude
       .mockResolvedValueOnce('web supplement') // fetchWebContext
-      .mockResolvedValueOnce('topics')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+      .mockResolvedValueOnce(VALID_POST);      // generatePost
 
     const result = await generatePipelinePost();
 
     expect(result.hnContext).toBe('sparse HN ctx');
     expect(result.webContext).toBe('web supplement');
-    expect(mockCallClaude).toHaveBeenCalledTimes(4);
+    expect(mockCallClaude).toHaveBeenCalledTimes(2);
   });
 });
 
-describe('generatePipelinePost with publishedTopics', () => {
-  it('injects dedup block into selectTopics system prompt when publishedTopics provided', async () => {
-    mockCallClaude
-      .mockResolvedValueOnce('1. Topic A\n2. Topic B\n3. Topic C')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+describe('generatePipelinePost with memoryEntries', () => {
+  it('injects dedup block into selectTopics system prompt when memoryEntries provided', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(3))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     await generatePipelinePost({
-      publishedTopics: ['1. OldTopic X (Anthropic)', '1. OldTopic Y (OpenAI)'],
+      memoryEntries: [
+        { url: 'https://example.com/x', title: 'OldTopic X', publishedAt: new Date().toISOString(), postId: null },
+        { url: 'https://example.com/y', title: 'OldTopic Y', publishedAt: new Date().toISOString(), postId: null },
+      ],
     });
 
-    const selectCall = mockCallClaude.mock.calls[0];
-    expect(selectCall[0].systemPrompt).toContain('OldTopic X');
-    expect(selectCall[0].systemPrompt).toContain('НЕ повторяй');
+    const selectCallParams = mockCallClaudeStructured.mock.calls[0][0];
+    expect(selectCallParams.systemPrompt).toContain('OldTopic X');
+    expect(selectCallParams.systemPrompt).toContain('НЕ повторяй');
+    expect(selectCallParams.systemPrompt).toContain('ТЕМЫ ИЗ ПОСЛЕДНИХ ПОСТОВ');
   });
 
-  it('does not add dedup block when publishedTopics is empty array', async () => {
-    mockCallClaude
-      .mockResolvedValueOnce('1. Topic A\n2. Topic B\n3. Topic C')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+  it('does not add dedup block when memoryEntries is empty array', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
-    await generatePipelinePost({ publishedTopics: [] });
+    await generatePipelinePost({ memoryEntries: [] });
 
-    const selectCall = mockCallClaude.mock.calls[0];
-    expect(selectCall[0].systemPrompt).not.toContain('НЕ повторяй');
+    const selectCallParams = mockCallClaudeStructured.mock.calls[0][0];
+    expect(selectCallParams.systemPrompt).not.toContain('НЕ повторяй');
   });
 
   it('does not add dedup block when no options provided', async () => {
-    mockCallClaude
-      .mockResolvedValueOnce('1. Topic A')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     await generatePipelinePost();
 
-    const selectCall = mockCallClaude.mock.calls[0];
-    expect(selectCall[0].systemPrompt).not.toContain('НЕ повторяй');
+    const selectCallParams = mockCallClaudeStructured.mock.calls[0][0];
+    expect(selectCallParams.systemPrompt).not.toContain('НЕ повторяй');
   });
 });
 
 describe('generatePipelinePost with previousIntros', () => {
   it('injects intros block into generatePost user message when previousIntros provided', async () => {
-    mockCallClaude
-      .mockResolvedValueOnce('1. Topic A\n2. Topic B\n3. Topic C')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(3))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     await generatePipelinePost({
       previousIntros: ['Четверг, прогрелся, завис на HN.', 'Пятница, читал RSS.'],
     });
 
-    const generateCall = mockCallClaude.mock.calls[1];
-    expect(generateCall[0].userMessage).toContain('Четверг, прогрелся');
-    expect(generateCall[0].userMessage).toContain('НЕ повторяй');
+    const generateCallParams = mockCallClaude.mock.calls[0][0];
+    expect(generateCallParams.userMessage).toContain('Четверг, прогрелся');
+    expect(generateCallParams.userMessage).toContain('НЕ повторяй');
   });
 
   it('does not add intros block when previousIntros is empty', async () => {
-    mockCallClaude
-      .mockResolvedValueOnce('1. Topic A')
-      .mockResolvedValueOnce(VALID_POST)
-      .mockResolvedValueOnce('хорошо');
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     await generatePipelinePost({ previousIntros: [] });
 
-    const generateCall = mockCallClaude.mock.calls[1];
-    expect(generateCall[0].userMessage).not.toContain('НЕ повторяй');
+    const generateCallParams = mockCallClaude.mock.calls[0][0];
+    expect(generateCallParams.userMessage).not.toContain('НЕ повторяй');
+  });
+});
+
+describe('generatePipelinePost with callbacks', () => {
+  it('injects CALLBACK CONTEXT into generatePost when findCallbacks returns matches', async () => {
+    const callbackEntry = {
+      url: '',
+      title: 'GPT-5 Flash release',
+      publishedAt: new Date(Date.now() - 3 * 7 * 24 * 60 * 60 * 1000).toISOString(),
+      postId: null,
+    };
+    mockFindCallbacks.mockReturnValueOnce([callbackEntry]);
+
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
+
+    await generatePipelinePost({
+      memoryEntries: [callbackEntry],
+    });
+
+    const generateCallParams = mockCallClaude.mock.calls[0][0];
+    expect(generateCallParams.userMessage).toContain('CALLBACK CONTEXT');
+    expect(generateCallParams.userMessage).toContain('GPT-5 Flash release');
+  });
+
+  it('does not inject CALLBACK CONTEXT when findCallbacks returns empty', async () => {
+    mockFindCallbacks.mockReturnValueOnce([]);
+
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
+
+    await generatePipelinePost({ memoryEntries: [] });
+
+    const generateCallParams = mockCallClaude.mock.calls[0][0];
+    expect(generateCallParams.userMessage).not.toContain('CALLBACK CONTEXT');
+  });
+
+  it('uses correct Russian plural form for weeks (5 weeks → недель)', async () => {
+    const fiveWeeksAgo = new Date(Date.now() - 5 * 7 * 24 * 60 * 60 * 1000).toISOString();
+    const callbackEntry = {
+      url: '', title: 'Some old release', publishedAt: fiveWeeksAgo, postId: null as null,
+    };
+    mockFindCallbacks.mockReturnValueOnce([callbackEntry]);
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
+
+    await generatePipelinePost({ memoryEntries: [callbackEntry] });
+
+    const generateCallParams = mockCallClaude.mock.calls[0][0];
+    expect(generateCallParams.userMessage).toContain('5 недель');
+    expect(generateCallParams.userMessage).not.toContain('5 недели');
   });
 });
 

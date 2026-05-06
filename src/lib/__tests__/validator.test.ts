@@ -1,21 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { validatePost, validateBossPost } from '../validator.js';
 
-const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Не бейте. 🐤
+// 🐤 only on greeting and signature lines; body is long enough so they are ≥500 chars apart.
+const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Не бейте.
 
 Кеша на проводе🐤
 
-Новость первая про AI.
+Новость первая: Anthropic обновила Claude - новая версия с улучшенными возможностями рассуждения и более точным следованием инструкциям. Разработчики отметили рост точности на сложных задачах.
 📎 источник: https://example.com/1
 
 ~ ~ ~
 
-Новость вторая про Claude.
+Новость вторая: Anthropic выпустила API-обновление с поддержкой tool use в режиме streaming. Для разработчиков это открывает новые сценарии использования в real-time приложениях.
 📎 источник: https://example.com/2
 
 ~ ~ ~
 
-Новость третья про Cursor.
+Новость третья: Cursor добавил Claude как основного AI-ассистента в свой редактор. Инструмент показывает стабильный рост и набрал более миллиона активных пользователей за квартал.
 📎 источник: https://example.com/3
 
 ~ ~ ~
@@ -59,7 +60,7 @@ describe('validatePost', () => {
   });
 
   it('fails with em-dash', () => {
-    const post = VALID_POST + '\nТест\u2014пробел';
+    const post = VALID_POST + '\nТест—пробел';
     const result = validatePost(post);
     expect(result.valid).toBe(false);
     expect(result.errors.some(e => e.includes('em-dash'))).toBe(true);
@@ -110,6 +111,24 @@ describe('validatePost', () => {
   });
 });
 
+describe('chickenDistance rule', () => {
+  it('fails when two 🐤 are less than 500 chars apart', () => {
+    const post = 'Я ТОЛЬКО УЧУСЬ.\n\nКеша🐤\n\nShort body.\n📎📎📎\n\nПодпись🐤';
+    expect(validatePost(post).errors.some(e => e.includes('too close'))).toBe(true);
+  });
+
+  it('does not error when only one 🐤 is present', () => {
+    const post = 'Я ТОЛЬКО УЧУСЬ.\n\nКеша🐤\n\nsome body';
+    expect(validatePost(post).errors.some(e => e.includes('too close'))).toBe(false);
+  });
+
+  it('does not error when two 🐤 are 600+ chars apart', () => {
+    const filler = 'x'.repeat(600);
+    const post = `Я ТОЛЬКО УЧУСЬ.\n\nКеша🐤\n\n${filler}\n\nПодпись🐤`;
+    expect(validatePost(post).errors.some(e => e.includes('too close'))).toBe(false);
+  });
+});
+
 describe('validateBossPost', () => {
   it('passes a clean post', () => {
     const text = 'Это обычный пост без проблем. Вполне нормальный текст. 🐤';
@@ -129,7 +148,7 @@ describe('validateBossPost', () => {
   });
 
   it('fails with em-dash', () => {
-    const text = 'Текст\u2014с длинным тире';
+    const text = 'Текст—с длинным тире';
     const result = validateBossPost(text);
     expect(result.valid).toBe(false);
     expect(result.errors.some(e => e.includes('em-dash'))).toBe(true);
@@ -157,7 +176,7 @@ describe('validateBossPost', () => {
   });
 
   it('collects multiple errors', () => {
-    const text = 'x\u2014y **bold**';
+    const text = 'x—y **bold**';
     const result = validateBossPost(text);
     expect(result.errors.length).toBeGreaterThanOrEqual(2);
   });
