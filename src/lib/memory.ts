@@ -48,3 +48,28 @@ export async function appendMemory(entries: MemoryEntry[]): Promise<void> {
     console.warn('[memory] appendMemory error:', err);
   }
 }
+
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+export function findCallbacks(newTitles: string[], memory: MemoryEntry[]): MemoryEntry[] {
+  const now = Date.now();
+  const results: MemoryEntry[] = [];
+
+  for (const entry of memory) {
+    const ageWeeks = (now - new Date(entry.publishedAt).getTime()) / MS_PER_WEEK;
+    if (ageWeeks < 2 || ageWeeks > 8) continue;
+
+    const entryWords = entry.title.toLowerCase().split(/\s+/).filter(w => w.length >= 5);
+    if (entryWords.length === 0) continue;
+
+    const matched = newTitles.some(title => {
+      const titleWords = title.toLowerCase().split(/\s+/).filter(w => w.length >= 5);
+      return titleWords.some(tw => entryWords.some(ew => ew.includes(tw) || tw.includes(ew)));
+    });
+
+    if (matched) results.push(entry);
+    if (results.length === 3) break;
+  }
+
+  return results;
+}

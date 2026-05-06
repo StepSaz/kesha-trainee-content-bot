@@ -7,7 +7,7 @@ vi.mock('@netlify/blobs', () => ({
   getStore: () => ({ get: mockGet, setJSON: mockSetJSON }),
 }));
 
-import { loadMemory, appendMemory, type MemoryEntry } from '../memory.js';
+import { loadMemory, appendMemory, findCallbacks, type MemoryEntry } from '../memory.js';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -71,5 +71,43 @@ describe('appendMemory', () => {
     expect(saved).toHaveLength(40);
     expect(saved[0].title).toBe('Entry 1');
     expect(saved[39].title).toBe('New');
+  });
+});
+
+const weeksAgo = (n: number): string =>
+  new Date(Date.now() - n * 7 * 24 * 60 * 60 * 1000).toISOString();
+
+describe('findCallbacks', () => {
+  it('returns [] for empty memory', () => {
+    expect(findCallbacks(['OpenAI launch'], [])).toEqual([]);
+  });
+
+  it('returns matching entry from 2-8 weeks ago by keyword', () => {
+    const e: MemoryEntry = { url: '', title: 'OpenAI DevDay launch', publishedAt: weeksAgo(3), postId: null };
+    const result = findCallbacks(['OpenAI announcement'], [e]);
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('OpenAI DevDay launch');
+  });
+
+  it('ignores entries < 2 weeks old (dedup zone)', () => {
+    const e: MemoryEntry = { url: '', title: 'OpenAI DevDay launch', publishedAt: weeksAgo(1), postId: null };
+    expect(findCallbacks(['OpenAI announcement'], [e])).toEqual([]);
+  });
+
+  it('ignores entries > 8 weeks old', () => {
+    const e: MemoryEntry = { url: '', title: 'OpenAI DevDay launch', publishedAt: weeksAgo(9), postId: null };
+    expect(findCallbacks(['OpenAI announcement'], [e])).toEqual([]);
+  });
+
+  it('ignores entries with no keyword overlap (≥5 chars)', () => {
+    const e: MemoryEntry = { url: '', title: 'Google Maps update', publishedAt: weeksAgo(3), postId: null };
+    expect(findCallbacks(['OpenAI announcement'], [e])).toEqual([]);
+  });
+
+  it('caps result at 3 matches', () => {
+    const entries: MemoryEntry[] = Array.from({ length: 5 }, (_, i) => ({
+      url: '', title: `Claude release ${i}`, publishedAt: weeksAgo(3), postId: null,
+    }));
+    expect(findCallbacks(['Claude update'], entries).length).toBeLessThanOrEqual(3);
   });
 });
