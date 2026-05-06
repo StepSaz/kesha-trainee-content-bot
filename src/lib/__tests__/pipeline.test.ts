@@ -414,6 +414,24 @@ describe('generatePipelinePost with callbacks', () => {
     const generateCallParams = mockCallClaude.mock.calls[0][0];
     expect(generateCallParams.userMessage).not.toContain('CALLBACK CONTEXT');
   });
+
+  it('uses correct Russian plural form for weeks (5 weeks → недель)', async () => {
+    const fiveWeeksAgo = new Date(Date.now() - 5 * 7 * 24 * 60 * 60 * 1000).toISOString();
+    const callbackEntry = {
+      url: '', title: 'Some old release', publishedAt: fiveWeeksAgo, postId: null as null,
+    };
+    mockFindCallbacks.mockReturnValueOnce([callbackEntry]);
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
+
+    await generatePipelinePost({ memoryEntries: [callbackEntry] });
+
+    const generateCallParams = mockCallClaude.mock.calls[0][0];
+    expect(generateCallParams.userMessage).toContain('5 недель');
+    expect(generateCallParams.userMessage).not.toContain('5 недели');
+  });
 });
 
 describe('extractIntro', () => {

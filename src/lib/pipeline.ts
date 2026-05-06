@@ -263,10 +263,15 @@ async function generatePost(
   const callbackBlock = callbackMatches.length > 0
     ? `\n\nCALLBACK CONTEXT (используй по желанию — только если органично вписывается в пост):\n${
         callbackMatches.map(e => {
-          const weeksAgo = Math.round(
+          const n = Math.floor(
             (Date.now() - new Date(e.publishedAt).getTime()) / (7 * 24 * 60 * 60 * 1000)
           );
-          const ago = weeksAgo === 1 ? '1 неделю' : `${weeksAgo} недели`;
+          const mod10 = n % 10;
+          const mod100 = n % 100;
+          let ago: string;
+          if (mod10 === 1 && mod100 !== 11) ago = `${n} неделю`;
+          else if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) ago = `${n} недели`;
+          else ago = `${n} недель`;
           return `- "${e.title}" упоминался ${ago} назад — можно сослаться как на развитие истории`;
         }).join('\n')
       }`
