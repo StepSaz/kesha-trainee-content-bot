@@ -49,7 +49,7 @@ export default async (req: Request): Promise<Response> => {
         sendResult = await sendToChannel(result.post!, chatId);
       }
 
-      const rewrote = !result.review.toLowerCase().startsWith('хорошо') && !!result.post && result.post !== result.draft;
+      const rewrote = result.review.verdict !== 'ok' && !!result.post && result.post !== result.draft;
 
       await store.setJSON('latest-result', {
         status: result.success ? 'ok' : 'failed',
@@ -62,7 +62,7 @@ export default async (req: Request): Promise<Response> => {
         selectedTopics: result.selectedTopics,
         draft: result.draft,
         review: result.review,
-        reviewVerdict: result.review.split('\n')[0].trim(),
+        reviewVerdict: result.review.verdict,
         rewrote,
         post: result.post,
         errors: result.errors,

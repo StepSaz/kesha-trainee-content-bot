@@ -1,6 +1,6 @@
 import type { Config } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
-import { generatePipelinePost, extractIntro, type PipelineOptions, type PipelineResult } from '../../src/lib/pipeline.js';
+import { generatePipelinePost, extractIntro, formatSelectedTopics, type PipelineOptions, type PipelineResult } from '../../src/lib/pipeline.js';
 import { generateManagedPost } from '../../src/lib/managed-agent.js';
 import { sendToChannel } from '../../src/lib/telegram.js';
 
@@ -94,7 +94,7 @@ export default async (): Promise<Response> => {
       selectedTopics: result.selectedTopics,
       draft: result.draft,
       review: result.review,
-      rewrote: !result.review.toLowerCase().startsWith('хорошо') && !!result.post && result.post !== result.draft,
+      rewrote: result.review.verdict !== 'ok' && !!result.post && result.post !== result.draft,
       post: result.post,
       timing: result.timing,
       sendResult,
@@ -104,7 +104,7 @@ export default async (): Promise<Response> => {
 
     if (mode !== 'managed') {
       const pipelineResult = result as PipelineResult;
-      const newTopics = [...publishedTopics, pipelineResult.selectedTopics].slice(-4);
+      const newTopics = [...publishedTopics, formatSelectedTopics(pipelineResult.selectedTopics)].slice(-4);
       await store.setJSON('published-topics', newTopics);
 
       const newIntro = extractIntro(result.post!);

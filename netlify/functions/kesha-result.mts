@@ -1,5 +1,6 @@
 import type { Config } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
+import { formatSelectedTopics, type SelectedTopics, type ReviewResult } from '../../src/lib/pipeline.js';
 
 interface StoredResult {
   status: 'running' | 'ok' | 'failed' | 'error';
@@ -10,9 +11,9 @@ interface StoredResult {
   // pipeline-specific
   hnContext?: string;
   webContext?: string;
-  selectedTopics?: string;
+  selectedTopics?: SelectedTopics;
   draft?: string;
-  review?: string;
+  review?: ReviewResult;
   reviewVerdict?: string;
   rewrote?: boolean;
   // shared
@@ -77,12 +78,14 @@ function renderPage(result: StoredResult | null, secret: string): string {
       sections += section('web', '🌐 Web поиск', `${webLines} строк`,
         e(result.webContext ?? '(пусто)'));
 
-      sections += section('topics', '🎯 Выбранные темы', '',
-        e(result.selectedTopics ?? '(пусто)'), true);
+      const topicsBody = result.selectedTopics
+        ? e(formatSelectedTopics(result.selectedTopics))
+        : '(пусто)';
+      sections += section('topics', '🎯 Выбранные темы', '', topicsBody, true);
 
       const reviewVerdict = result.reviewVerdict ?? '';
-      const reviewBadge = reviewVerdict.toLowerCase().startsWith('хорошо')
-        ? '✅ хорошо — перезапись пропущена'
+      const reviewBadge = reviewVerdict === 'ok'
+        ? '✅ ok — перезапись пропущена'
         : result.rewrote
           ? `⚠️ "${e(reviewVerdict)}" — перезаписан`
           : `⚠️ "${e(reviewVerdict)}"`;
@@ -90,8 +93,18 @@ function renderPage(result: StoredResult | null, secret: string): string {
       sections += section('draft', '✏️ Черновик', '',
         e(result.draft ?? '(пусто)'));
 
+      const reviewBody = result.review
+        ? `verdict: ${result.review.verdict}\n\n` +
+          (result.review.notes.length > 0
+            ? result.review.notes.map(n => {
+                const q = n.quote ? `\n  цитата: ${n.quote}` : '';
+                const s = n.suggestion ? `\n  правка: ${n.suggestion}` : '';
+                return `- ${n.issue}${q}${s}`;
+              }).join('\n')
+            : '(нет замечаний)')
+        : '(пусто)';
       sections += section('review', '👁️ Ревью редактора', reviewBadge,
-        e(result.review ?? '(пусто)'), true);
+        e(reviewBody), true);
     }
 
     // Final post
