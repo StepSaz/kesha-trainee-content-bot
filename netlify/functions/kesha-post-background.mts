@@ -104,19 +104,19 @@ export default async (): Promise<Response> => {
     console.log(`[kesha-post] posted! messageId=${sendResult.messageId}`);
 
     if (mode !== 'managed') {
-        const pipelineResult = result as PipelineResult;
-        const newEntries: MemoryEntry[] = pipelineResult.selectedTopics.topics.map(t => ({
-          url: t.sourceUrl,
-          title: t.title,
-          publishedAt: new Date().toISOString(),
-          postId: sendResult.messageId ?? null,
-        }));
-        await appendMemory(newEntries);
+      const pipelineResult = result as PipelineResult;
+      const newEntries: MemoryEntry[] = pipelineResult.selectedTopics.topics.map(t => ({
+        url: t.sourceUrl,
+        title: t.title,
+        publishedAt: new Date().toISOString(),
+        postId: sendResult.messageId ?? null,
+      }));
+      await appendMemory(newEntries);
 
-        const newIntro = extractIntro(result.post!);
-        const newIntros = [...previousIntros, newIntro].slice(-10);
-        await store.setJSON('previous-intros', newIntros);
-      }
+      const newIntro = extractIntro(result.post!);
+      const newIntros = [...previousIntros, newIntro].slice(-10);
+      await store.setJSON('previous-intros', newIntros);
+    }
 
     return new Response('ok', { status: 200 });
   } catch (err) {
