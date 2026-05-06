@@ -46,7 +46,7 @@ export async function sendToChannel(text: string, chatId?: string): Promise<Send
 export async function sendMessage(
   chatId: string,
   text: string,
-  options?: { replyMarkup?: InlineKeyboard | null }
+  options?: { replyMarkup?: InlineKeyboard | null; replyToMessageId?: number }
 ): Promise<SendResult> {
   const token = process.env.TELEGRAM_BOT_TOKEN!;
 
@@ -54,6 +54,9 @@ export async function sendMessage(
     const body: Record<string, unknown> = { chat_id: chatId, text };
     if (options !== undefined && 'replyMarkup' in options) {
       body.reply_markup = options.replyMarkup;
+    }
+    if (options?.replyToMessageId) {
+      body.reply_to_message_id = options.replyToMessageId;
     }
 
     const response = await fetch(
