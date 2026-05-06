@@ -304,12 +304,17 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
     return;
   }
 
-  const targetChatId = data === 'digest_test'
-    ? process.env.TELEGRAM_TEST_CHAT_ID!
-    : process.env.TELEGRAM_CHAT_ID!;
+  let targetChatId: string;
+  if (data === 'digest_test') targetChatId = process.env.TELEGRAM_TEST_CHAT_ID!;
+  else if (data === 'digest_prod') targetChatId = process.env.TELEGRAM_CHAT_ID!;
+  else {
+    await answerCallbackQuery(callbackQueryId);
+    return;
+  }
 
-  const sendResult = await sendToChannel(pending.post, targetChatId);
+  // Delete first — prevents double-click and ensures cleanup even if sendToChannel throws
   await store.delete('pending-digest');
+  const sendResult = await sendToChannel(pending.post, targetChatId);
   await answerCallbackQuery(callbackQueryId);
 
   if (!sendResult.success) {
@@ -318,14 +323,18 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
     return;
   }
 
-  const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map(t => ({
-    url: t.sourceUrl,
-    title: t.title,
-    publishedAt: new Date().toISOString(),
-    postId: sendResult.messageId ?? null,
-  }));
-  await appendMemory(newEntries);
-  await store.setJSON('previous-intros', pending.newIntros);
+  try {
+    const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map(t => ({
+      url: t.sourceUrl,
+      title: t.title,
+      publishedAt: new Date().toISOString(),
+      postId: sendResult.messageId ?? null,
+    }));
+    await appendMemory(newEntries);
+    await store.setJSON('previous-intros', pending.newIntros);
+  } catch (err) {
+    console.error('[boss] memory update failed after publish:', err);
+  }
 
   const label = data === 'digest_test' ? 'тест' : 'прод';
   await editMessageText(chatId, messageId,
