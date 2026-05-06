@@ -13,6 +13,7 @@ import {
 } from '../../src/lib/telegram.js';
 import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
+import { callClaude } from '../../src/lib/claude.js';
 
 interface TelegramUser {
   id: number;
@@ -28,6 +29,7 @@ interface TelegramMessage {
   from: TelegramUser;
   chat: TelegramChat;
   text?: string;
+  reply_to_message?: { message_id: number; text?: string };
 }
 
 interface TelegramCallbackQuery {
@@ -341,6 +343,55 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
     `✅ Отправлено в ${label}: t.me/psyreq/${sendResult.messageId}`, { replyMarkup: null });
 }
 
+type CommentIntent = 'expand' | 'explain' | 'compare' | 'freeform';
+
+function parseCommentIntent(text: string): CommentIntent {
+  const t = text.toLowerCase();
+  if (/расширь|подробнее|больше/.test(t)) return 'expand';
+  if (/объясни|что значит|что такое/.test(t)) return 'explain';
+  if (/сравни|vs\b|versus/.test(t)) return 'compare';
+  return 'freeform';
+}
+
+async function handleCommentReply(message: TelegramMessage): Promise<void> {
+  const config = readBossConfig();
+  if (!config.allowed_user_ids.includes(message.from.id)) return;
+
+  const replyToId = message.reply_to_message?.message_id;
+  if (!replyToId) return;
+
+  const store = getStore('kesha');
+  const rateKey = `comment-rate:${replyToId}`;
+  const currentCount = (await store.get(rateKey, { type: 'json' }) as number | null) ?? 0;
+  if (currentCount >= 3) return;
+  await store.setJSON(rateKey, currentCount + 1);
+
+  const intent = parseCommentIntent(message.text ?? '');
+  const postText = message.reply_to_message?.text ?? '';
+
+  const intentInstructions: Record<CommentIntent, string> = {
+    expand: 'Степан просит развернуть тему подробнее. Напиши 2-3 абзаца, углубись в детали.',
+    explain: 'Степан просит объяснить проще. Объясни как для умного нетехнического человека.',
+    compare: 'Степан просит сравнение. Сравни кратко — что лучше, хуже, в каком контексте.',
+    freeform: 'Степан написал комментарий к посту. Ответь по делу, в своём стиле стажёра.',
+  };
+
+  const chatId = String(message.chat.id);
+  try {
+    const response = await callClaude({
+      systemPrompt: 'Ты Кеша - стажёр-бот в Telegram-канале. Пишешь живо, по-русски, без официоза. Никаких em-dash (—), никакого markdown. Лаконично - не больше 3-4 предложений.',
+      userMessage: `Контекст поста:\n${postText}\n\nКомментарий Степана: "${message.text}"\n\n${intentInstructions[intent]}`,
+      model: 'claude-haiku-4-5-20251001',
+      temperature: 0.7,
+      maxTokens: 300,
+    });
+
+    await sendMessage(chatId, response, { replyToMessageId: message.message_id });
+  } catch (err) {
+    console.error('[boss] comment reaction error:', err);
+  }
+}
+
 export default async (req: Request): Promise<Response> => {
   let update: TelegramUpdate;
   try {
@@ -367,6 +418,8 @@ export default async (req: Request): Promise<Response> => {
     await handleDigest(msg);
   } else if (msg?.text?.match(/^\/boss/)) {
     await handleCommand(msg);
+  } else if (msg && msg.reply_to_message && msg.from.id === 352830345) {
+    await handleCommentReply(msg);
   }
 
   return new Response(null, { status: 202 });
