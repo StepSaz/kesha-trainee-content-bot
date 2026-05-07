@@ -24,5 +24,11 @@
     "vibe coding news",
     "Cursor IDE updates",
     "AI developer tools new"
+  ],
+  "light_web_queries": [
+    "AI model release announcement {MONTH} {YEAR}",
+    "AI developer tools coding assistant IDE news {MONTH} {YEAR}",
+    "AI product launch business integration {MONTH} {YEAR}",
+    "AI regulation safety policy news {MONTH} {YEAR}"
   ]
 }

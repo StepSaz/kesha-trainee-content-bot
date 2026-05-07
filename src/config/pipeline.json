@@ -6,6 +6,12 @@
       "max_tokens": 2048,
       "tools": ["web_search"]
     },
+    "gatherLightWeb": {
+      "model": "claude-haiku-4-5-20251001",
+      "temperature": 0.3,
+      "max_tokens": 1024,
+      "tools": ["web_search"]
+    },
     "selectTopics": {
       "model": "claude-sonnet-4-6",
       "temperature": 0.3,
