@@ -115,7 +115,7 @@ export async function editMessageText(
   }
 }
 
-export async function answerCallbackQuery(callbackQueryId: string): Promise<void> {
+export async function answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN!;
 
   try {
@@ -124,7 +124,7 @@ export async function answerCallbackQuery(callbackQueryId: string): Promise<void
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ callback_query_id: callbackQueryId }),
+        body: JSON.stringify({ callback_query_id: callbackQueryId, ...(text ? { text } : {}) }),
       }
     );
     const data = await response.json() as { ok: boolean; description?: string };

@@ -227,7 +227,7 @@ async function handleCallback(callbackQuery: TelegramCallbackQuery): Promise<voi
       await editMessageText(chatId, previewMessageId, `❌ Ошибка публикации: ${sendResult.error}`, { replyMarkup: null });
     }
   } else {
-    await answerCallbackQuery(callbackQueryId);
+    await answerCallbackQuery(callbackQueryId, 'Публикация отменена');
     await editMessageText(chatId, previewMessageId, '❌ Отменено.', { replyMarkup: null });
   }
 }
@@ -309,7 +309,7 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
 
   if (data === 'digest_cancel') {
     await store.delete('pending-digest');
-    await answerCallbackQuery(callbackQueryId);
+    await answerCallbackQuery(callbackQueryId, 'Публикация отменена');
     await editMessageText(chatId, messageId, '❌ Отменено.', { replyMarkup: null });
     return;
   }
