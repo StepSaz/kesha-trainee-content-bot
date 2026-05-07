@@ -280,13 +280,12 @@ async function handleDigest(message: TelegramMessage): Promise<void> {
 
     const keyboard: InlineKeyboard = {
       inline_keyboard: [[
-        { text: '🧪 В тест', callback_data: 'digest_test' },
-        { text: '📢 В прод', callback_data: 'digest_prod' },
+        { text: '✅ Опубликовать', callback_data: 'digest_prod' },
         { text: '❌ Отмена', callback_data: 'digest_cancel' },
       ]],
     };
 
-    await editMessageText(chatId, progressMessageId, '✅ Готово, пост ниже — выбери куда отправить:');
+    await editMessageText(chatId, progressMessageId, '✅ Готово, пост ниже - подтверди публикацию:');
     await sendMessage(chatId, result.post, { replyMarkup: keyboard });
   } catch (err) {
     await editMessageText(chatId, progressMessageId, `❌ Ошибка: ${String(err)}`);
@@ -315,13 +314,11 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
     return;
   }
 
-  let targetChatId: string;
-  if (data === 'digest_test') targetChatId = process.env.TELEGRAM_TEST_CHAT_ID!;
-  else if (data === 'digest_prod') targetChatId = process.env.TELEGRAM_CHAT_ID!;
-  else {
+  if (data !== 'digest_prod') {
     await answerCallbackQuery(callbackQueryId);
     return;
   }
+  const targetChatId = process.env.TELEGRAM_CHAT_ID!;
 
   // Delete first — prevents double-click and ensures cleanup even if sendToChannel throws
   await store.delete('pending-digest');
@@ -334,24 +331,22 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
     return;
   }
 
-  if (data === 'digest_prod') {
-    try {
-      const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map(t => ({
-        url: t.sourceUrl,
-        title: t.title,
-        publishedAt: new Date().toISOString(),
-        postId: sendResult.messageId ?? null,
-      }));
-      await appendMemory(newEntries);
-      await store.setJSON('previous-intros', pending.newIntros);
-    } catch (err) {
-      console.error('[boss] memory update failed after publish:', err);
-    }
+  try {
+    await store.setJSON('digest-last-manual-at', { publishedAt: new Date().toISOString() });
+    const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map(t => ({
+      url: t.sourceUrl,
+      title: t.title,
+      publishedAt: new Date().toISOString(),
+      postId: sendResult.messageId ?? null,
+    }));
+    await appendMemory(newEntries);
+    await store.setJSON('previous-intros', pending.newIntros);
+  } catch (err) {
+    console.error('[boss] memory update failed after publish:', err);
   }
 
-  const label = data === 'digest_test' ? 'тест' : 'прод';
   await editMessageText(chatId, messageId,
-    `✅ Отправлено в ${label}: t.me/psyreq/${sendResult.messageId}`, { replyMarkup: null });
+    `✅ Отправлено в канал: t.me/psyreq/${sendResult.messageId}`, { replyMarkup: null });
 }
 
 type CommentIntent = 'expand' | 'explain' | 'compare' | 'freeform';
