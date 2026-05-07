@@ -27,8 +27,6 @@
   ],
   "light_web_queries": [
     "AI model release news {FROM_DATE} to {TO_DATE}",
-    "AI developer tools coding assistant IDE release {FROM_DATE} to {TO_DATE}",
-    "AI product launch announcement {FROM_DATE} to {TO_DATE}",
-    "AI regulation safety policy {FROM_DATE} to {TO_DATE}"
+    "AI developer tools coding assistant IDE release {FROM_DATE} to {TO_DATE}"
   ]
 }
