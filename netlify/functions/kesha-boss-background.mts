@@ -586,7 +586,7 @@ export default async (req: Request): Promise<Response> => {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg?.text?.match(/^\/notes/)) {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
-  } else if (msg && msg.from?.id === 352830345 && (msg.message_thread_id || msg.reply_to_message)) {
+  } else if (msg && msg.from?.id === 352830345 && (msg.message_thread_id || msg.reply_to_message) && /кеша/i.test(msg.text ?? '')) {
     await handleCommentReply(msg);
   }
 
