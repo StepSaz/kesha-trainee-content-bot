@@ -162,24 +162,31 @@ describe('fetchSourceContext — RSS feeds', () => {
 });
 
 describe('fetchLightWebSearch', () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const oldDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const freshItem = (headline: string) =>
+    JSON.stringify([{ headline, url: `https://example.com/${headline}`, date: yesterday }]);
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('concatenates results from all 4 queries', async () => {
+  it('returns headlines from all 4 queries when all succeed', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('result A')
-      .mockResolvedValueOnce('result B')
-      .mockResolvedValueOnce('result C')
-      .mockResolvedValueOnce('result D');
+      .mockResolvedValueOnce(freshItem('News A'))
+      .mockResolvedValueOnce(freshItem('News B'))
+      .mockResolvedValueOnce(freshItem('News C'))
+      .mockResolvedValueOnce(freshItem('News D'));
 
     const result = await fetchLightWebSearch();
 
     expect(mockCallClaude).toHaveBeenCalledTimes(4);
-    expect(result).toContain('result A');
-    expect(result).toContain('result B');
-    expect(result).toContain('result C');
-    expect(result).toContain('result D');
+    expect(result).toContain('News A');
+    expect(result).toContain('News B');
+    expect(result).toContain('News C');
+    expect(result).toContain('News D');
   });
 
   it('returns empty string when all queries fail', async () => {
@@ -192,20 +199,65 @@ describe('fetchLightWebSearch', () => {
 
   it('returns partial results when some queries fail', async () => {
     mockCallClaude
-      .mockResolvedValueOnce('result A')
+      .mockResolvedValueOnce(freshItem('News A'))
       .mockRejectedValueOnce(new Error('fail'))
-      .mockResolvedValueOnce('result C')
+      .mockResolvedValueOnce(freshItem('News C'))
       .mockRejectedValueOnce(new Error('fail'));
 
     const result = await fetchLightWebSearch();
 
-    expect(result).toContain('result A');
-    expect(result).toContain('result C');
-    expect(result).not.toContain('result B');
+    expect(result).toContain('News A');
+    expect(result).toContain('News C');
+    expect(result).not.toContain('News B');
   });
 
-  it('injects current month and year into queries', async () => {
-    mockCallClaude.mockResolvedValue('some result');
+  it('drops stale items older than 7 days even when model returns them', async () => {
+    const mixed = JSON.stringify([
+      { headline: 'Fresh news', url: 'https://example.com/fresh', date: yesterday },
+      { headline: 'Old news', url: 'https://example.com/old', date: oldDate },
+    ]);
+    mockCallClaude.mockResolvedValueOnce(mixed).mockResolvedValue('[]');
+
+    const result = await fetchLightWebSearch();
+
+    expect(result).toContain('Fresh news');
+    expect(result).not.toContain('Old news');
+  });
+
+  it('returns empty string when model returns only stale items', async () => {
+    const staleOnly = JSON.stringify([
+      { headline: 'Old news', url: 'https://example.com/old', date: oldDate },
+    ]);
+    mockCallClaude.mockResolvedValue(staleOnly);
+
+    const result = await fetchLightWebSearch();
+
+    expect(result).toBe('');
+  });
+
+  it('handles malformed JSON gracefully by skipping that query', async () => {
+    mockCallClaude
+      .mockResolvedValueOnce('not json at all')
+      .mockResolvedValueOnce(freshItem('News B'))
+      .mockResolvedValue('[]');
+
+    const result = await fetchLightWebSearch();
+
+    expect(result).not.toContain('not json');
+    expect(result).toContain('News B');
+  });
+
+  it('strips markdown code fences before parsing JSON', async () => {
+    const withFences = '```json\n' + freshItem('News with fences') + '\n```';
+    mockCallClaude.mockResolvedValueOnce(withFences).mockResolvedValue('[]');
+
+    const result = await fetchLightWebSearch();
+
+    expect(result).toContain('News with fences');
+  });
+
+  it('injects cutoff and today dates into queries', async () => {
+    mockCallClaude.mockResolvedValue('[]');
 
     await fetchLightWebSearch();
 

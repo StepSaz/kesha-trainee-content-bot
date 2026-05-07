@@ -220,6 +220,12 @@ export const fetchHackerNewsContext = fetchSourceContext;
 
 // ── Light web search ──────────────────────────────────────────────────────────
 
+interface WebNewsItem {
+  headline: string;
+  url: string;
+  date: string; // YYYY-MM-DD
+}
+
 export async function fetchLightWebSearch(): Promise<string> {
   const sourcesPath = join(process.cwd(), 'src/config/sources.json');
   const pipelinePath = join(process.cwd(), 'src/config/pipeline.json');
@@ -237,24 +243,29 @@ export async function fetchLightWebSearch(): Promise<string> {
 
   const cfg = pipeline.steps.gatherLightWeb;
   const now = new Date();
-  const monthYear = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
   const today = now.toISOString().slice(0, 10);
   const cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   const systemPrompt =
-    `Today is ${today}. Find 5 AI news items published between ${cutoff} and ${today}.\n` +
-    'For each item return: headline (one sentence), source URL, publication date.\n' +
+    `Today is ${today}. Search for AI news published between ${cutoff} and ${today}.\n` +
+    'Return a JSON array only — no other text, no markdown fences. Each element:\n' +
+    '  {"headline": "one sentence", "url": "exact URL from search results", "date": "YYYY-MM-DD"}\n' +
     'Rules:\n' +
-    '- Only include items published on or after ' + cutoff + '. Skip anything older.\n' +
-    '- Only use URLs that appear in your web search results. Never invent or guess URLs.\n' +
-    '- Return plain text only, no markdown.';
+    `- Only include items with date >= ${cutoff}. Exclude anything older — even if it is relevant.\n` +
+    '- Use only URLs that appear in your web search results. Never invent or guess URLs.\n' +
+    '- Return an empty array [] if nothing recent enough is found.';
+
+  const allItems: string[] = [];
 
   // Sequential to avoid hitting the Haiku 50k input tokens/minute rate limit.
   // These still run in parallel with HN fetch (the real latency win).
-  const results: string[] = [];
   for (let i = 0; i < queries.length; i++) {
-    const expanded = queries[i].replace('{MONTH} {YEAR}', monthYear);
-    const result = await callClaude({
+    const expanded = queries[i]
+      .replace('{FROM_DATE}', cutoff)
+      .replace('{TO_DATE}', today)
+      .replace('{MONTH} {YEAR}', now.toLocaleString('en-US', { month: 'long', year: 'numeric' }));
+
+    const raw = await callClaude({
       systemPrompt,
       userMessage: expanded,
       model: cfg.model,
@@ -265,8 +276,36 @@ export async function fetchLightWebSearch(): Promise<string> {
       console.warn(`[sources] light web query ${i + 1} failed:`, err);
       return '';
     });
-    results.push(result);
+
+    if (!raw) continue;
+
+    // Strip markdown fences — Haiku sometimes wraps JSON in code blocks
+    const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/\s*```$/m, '').trim();
+
+    let items: WebNewsItem[];
+    try {
+      const parsed: unknown = JSON.parse(cleaned);
+      if (!Array.isArray(parsed)) {
+        console.warn(`[sources] light web query ${i + 1}: response is not an array, skipping`);
+        continue;
+      }
+      items = parsed as WebNewsItem[];
+    } catch {
+      console.warn(`[sources] light web query ${i + 1}: JSON parse failed, skipping`);
+      continue;
+    }
+
+    // Programmatic date filter — do not trust the model to self-filter
+    const fresh = items.filter(item => item.date && item.headline && item.url && item.date >= cutoff);
+    const stale = items.length - fresh.length;
+    if (stale > 0) {
+      console.log(`[sources] light web query ${i + 1}: dropped ${stale} stale item(s) (before ${cutoff})`);
+    }
+
+    for (const item of fresh) {
+      allItems.push(`${item.headline}\n${item.url}\n${item.date}`);
+    }
   }
 
-  return results.filter(Boolean).join('\n\n');
+  return allItems.join('\n\n');
 }
