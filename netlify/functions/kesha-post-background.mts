@@ -4,6 +4,7 @@ import { generatePipelinePost, extractIntro, type PipelineOptions, type Pipeline
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
 import { generateManagedPost } from '../../src/lib/managed-agent.js';
 import { sendToChannel } from '../../src/lib/telegram.js';
+import { shouldSuppressCron } from '../../src/lib/cron-guard.js';
 
 export default async (): Promise<Response> => {
   if (process.env.KESHA_ENABLED !== 'true') {
@@ -21,6 +22,18 @@ export default async (): Promise<Response> => {
   console.log(`[kesha-post] mode=${mode} channel=${cronChannel}`);
 
   const store = getStore('kesha');
+
+  try {
+    const lastManual = await store.get('digest-last-manual-at', { type: 'json' }) as { publishedAt: string } | null;
+    if (shouldSuppressCron(lastManual?.publishedAt ?? null, Date.now())) {
+      const ageH = Math.round((Date.now() - new Date(lastManual!.publishedAt).getTime()) / 3600000);
+      console.log(`[kesha-post] skipping cron - manual digest published ${ageH}h ago`);
+      return new Response('skipped (manual digest)', { status: 200 });
+    }
+  } catch (err) {
+    console.error('[kesha-post] failed to read suppression blob, continuing:', err);
+  }
+
   await store.setJSON('latest-result', {
     status: 'running',
     startedAt: new Date().toISOString(),
