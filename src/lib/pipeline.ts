@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { callClaude, callClaudeStructured, type ToolDef } from './claude.js';
-import { fetchHackerNewsContext } from './sources.js';
+import { fetchHackerNewsContext, fetchLightWebSearch } from './sources.js';
 import { validatePost } from './validator.js';
 import { findHallucinated } from './url-checker.js';
 import { type MemoryEntry, findCallbacks } from './memory.js';
@@ -13,6 +13,7 @@ function readConfig(filename: string): string {
 interface PipelineConfig {
   steps: {
     gatherWeb: { model: string; temperature: number; max_tokens: number; tools: string[] };
+    gatherLightWeb: { model: string; temperature: number; max_tokens: number; tools: string[] };
     selectTopics: { model: string; temperature: number; max_tokens: number; tools: string[] };
     generate: { model: string; temperature: number; max_tokens: number; tools: string[] };
     review: { model: string; temperature: number; max_tokens: number; tools: string[] };
@@ -336,33 +337,17 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
   const timing: Record<string, number> = {};
 
   try {
-    // Step 0: Gather context — HN first, web search only as fallback
+    // Step 0: Gather context — HN + light web search in parallel
     const t0 = Date.now();
-    const sources = JSON.parse(readConfig('sources.json')) as SourcesConfig;
-    const threshold = sources.hackernews_api?.fallback_threshold ?? 8;
 
-    let hnContext = '';
-    let webContext = '';
-    let hnOk = false;
-    let hnItemCount = 0;
-    try {
-      const hn = await fetchHackerNewsContext();
-      hnContext = hn.context;
-      hnItemCount = hn.itemCount;
-      hnOk = true;
-    } catch (err) {
-      console.warn('[pipeline] hackernews fetch failed, will fall back to web search:', err);
-    }
-
-    if (!hnOk) {
-      console.log('[pipeline] running web search (HN unavailable)');
-      webContext = await fetchWebContext(cfg);
-    } else if (hnItemCount < threshold) {
-      console.log(`[pipeline] running web search (sparse HN: ${hnItemCount} < ${threshold})`);
-      webContext = await fetchWebContext(cfg);
-    } else {
-      console.log(`[pipeline] skipping web search (HN has ${hnItemCount} items, threshold ${threshold})`);
-    }
+    const [hnResult, webContext] = await Promise.all([
+      fetchHackerNewsContext().catch(err => {
+        console.warn('[pipeline] HN fetch failed:', err);
+        return { context: '', itemCount: 0 };
+      }),
+      fetchLightWebSearch(),
+    ]);
+    const hnContext = hnResult.context;
     timing.gatherContext = Date.now() - t0;
     console.log(`[pipeline] context gathered in ${timing.gatherContext}ms`);
 

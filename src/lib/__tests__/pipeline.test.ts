@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../claude.js', () => ({ callClaude: vi.fn(), callClaudeStructured: vi.fn() }));
-vi.mock('../sources.js', () => ({ fetchHackerNewsContext: vi.fn() }));
+vi.mock('../sources.js', () => ({ fetchHackerNewsContext: vi.fn(), fetchLightWebSearch: vi.fn() }));
 vi.mock('../validator.js', () => ({ validatePost: vi.fn() }));
 vi.mock('../url-checker.js', () => ({ findHallucinated: vi.fn() }));
 vi.mock('../memory.js', () => ({
@@ -10,7 +10,7 @@ vi.mock('../memory.js', () => ({
 
 import { generatePipelinePost, extractIntro, type SelectedTopics, type ReviewResult } from '../pipeline.js';
 import { callClaude, callClaudeStructured } from '../claude.js';
-import { fetchHackerNewsContext } from '../sources.js';
+import { fetchHackerNewsContext, fetchLightWebSearch } from '../sources.js';
 import { validatePost } from '../validator.js';
 import { findHallucinated } from '../url-checker.js';
 import { findCallbacks } from '../memory.js';
@@ -19,6 +19,7 @@ const mockFindCallbacks = vi.mocked(findCallbacks);
 const mockCallClaude = vi.mocked(callClaude);
 const mockCallClaudeStructured = vi.mocked(callClaudeStructured);
 const mockFetchHackerNewsContext = vi.mocked(fetchHackerNewsContext);
+const mockFetchLightWebSearch = vi.mocked(fetchLightWebSearch);
 const mockValidatePost = vi.mocked(validatePost);
 const mockFindHallucinated = vi.mocked(findHallucinated);
 
@@ -55,11 +56,12 @@ const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Н
 
 Ваш стажер-Кеша @st_szs 🐤`;
 
-// Default: HN returns enough items to skip web search fallback (threshold=8 in sources.json)
+// Default: HN returns 10 items, light web search returns '' (empty mock)
 beforeEach(() => {
   vi.clearAllMocks();
   mockFindCallbacks.mockReturnValue([]);
   mockFetchHackerNewsContext.mockResolvedValue({ context: 'HN context', itemCount: 10 });
+  mockFetchLightWebSearch.mockResolvedValue('');
   mockValidatePost.mockReturnValue({ valid: true, errors: [] });
   mockFindHallucinated.mockReturnValue({ urls: [], handles: [] }); // no hallucinations by default
 });
@@ -157,7 +159,7 @@ describe('generatePipelinePost', () => {
     const result = await generatePipelinePost();
 
     expect(result.hnContext).toBe('HN context');
-    expect(result.webContext).toBe(''); // HN above threshold → web skipped
+    expect(result.webContext).toBe(''); // light web search mock returns ''
     expect(result.selectedTopics).toMatchObject({ topics: expect.any(Array), sparseWeek: false });
   });
 
@@ -255,9 +257,10 @@ describe('generatePipelinePost URL hallucination check', () => {
   });
 });
 
-describe('generatePipelinePost web search fallback', () => {
-  it('skips web search when HN returns enough items', async () => {
+describe('generatePipelinePost parallel context gathering', () => {
+  it('returns light web search result as webContext alongside HN context', async () => {
     mockFetchHackerNewsContext.mockResolvedValue({ context: 'HN ctx', itemCount: 10 });
+    mockFetchLightWebSearch.mockResolvedValue('light web results');
     mockCallClaudeStructured
       .mockResolvedValueOnce(okTopics(1))
       .mockResolvedValueOnce(okReview);
@@ -265,41 +268,40 @@ describe('generatePipelinePost web search fallback', () => {
 
     const result = await generatePipelinePost();
 
-    expect(result.webContext).toBe('');
+    expect(result.hnContext).toBe('HN ctx');
+    expect(result.webContext).toBe('light web results');
     expect(mockCallClaude).toHaveBeenCalledTimes(1);       // generate only
     expect(mockCallClaudeStructured).toHaveBeenCalledTimes(2);
   });
 
-  it('runs web search when HN throws (API unavailable)', async () => {
+  it('returns empty hnContext when HN throws, light web search still runs', async () => {
     mockFetchHackerNewsContext.mockRejectedValue(new Error('API down'));
+    mockFetchLightWebSearch.mockResolvedValue('light web results');
     mockCallClaudeStructured
       .mockResolvedValueOnce(okTopics(1))
       .mockResolvedValueOnce(okReview);
-    mockCallClaude
-      .mockResolvedValueOnce('web fallback findings') // fetchWebContext
-      .mockResolvedValueOnce(VALID_POST);             // generatePost
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     const result = await generatePipelinePost();
 
     expect(result.hnContext).toBe('');
-    expect(result.webContext).toBe('web fallback findings');
-    expect(mockCallClaude).toHaveBeenCalledTimes(2);
+    expect(result.webContext).toBe('light web results');
+    expect(mockCallClaude).toHaveBeenCalledTimes(1);
   });
 
-  it('runs web search when HN itemCount is below threshold (sparse week)', async () => {
+  it('returns empty webContext when light web search returns empty string', async () => {
     mockFetchHackerNewsContext.mockResolvedValue({ context: 'sparse HN ctx', itemCount: 3 });
+    mockFetchLightWebSearch.mockResolvedValue('');
     mockCallClaudeStructured
       .mockResolvedValueOnce(okTopics(1))
       .mockResolvedValueOnce(okReview);
-    mockCallClaude
-      .mockResolvedValueOnce('web supplement') // fetchWebContext
-      .mockResolvedValueOnce(VALID_POST);      // generatePost
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
 
     const result = await generatePipelinePost();
 
     expect(result.hnContext).toBe('sparse HN ctx');
-    expect(result.webContext).toBe('web supplement');
-    expect(mockCallClaude).toHaveBeenCalledTimes(2);
+    expect(result.webContext).toBe('');
+    expect(mockCallClaude).toHaveBeenCalledTimes(1);
   });
 });
 
