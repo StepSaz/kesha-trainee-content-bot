@@ -77,6 +77,16 @@ export const validateStream = compose(
   chickenDistance(500),
 );
 
+// Notes posts have two 🐤 in the mandatory header (< 500 chars apart by design).
+export const validateNotes = compose(
+  requireDisclaimer,
+  requireKesha,
+  requireChicken,
+  noEmDash,
+  noMarkdown,
+  maxLength(4000),
+);
+
 // Backward-compat aliases — existing callers keep working.
 export const validatePost = validateWeekly;
 export const validateBossPost = validateBoss;

@@ -14,7 +14,7 @@ import {
 import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
 import { callClaude } from '../../src/lib/claude.js';
-import { validateStream } from '../../src/lib/validator.js';
+import { validateNotes } from '../../src/lib/validator.js';
 
 interface TelegramUser {
   id: number;
@@ -514,7 +514,7 @@ async function handleNotes(message: TelegramMessage): Promise<void> {
       return;
     }
 
-    const validation = validateStream(generatedPost);
+    const validation = validateNotes(generatedPost);
     if (!validation.valid) {
       await editMessageText(chatId, progressMessageId,
         `❌ Пост не прошёл валидацию: ${validation.errors.join(', ')}`);
