@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { getStore } from '@netlify/blobs';
 import { XMLParser } from 'fast-xml-parser';
+import { callClaude } from './claude.js';
 
 // ── Config types ─────────────────────────────────────────────────────────────
 
@@ -216,3 +217,44 @@ export async function fetchSourceContext(): Promise<SourceContext> {
 
 // Backward-compat alias — pipeline.ts currently imports this name.
 export const fetchHackerNewsContext = fetchSourceContext;
+
+// ── Light web search ──────────────────────────────────────────────────────────
+
+export async function fetchLightWebSearch(): Promise<string> {
+  const sourcesPath = join(process.cwd(), 'src/config/sources.json');
+  const pipelinePath = join(process.cwd(), 'src/config/pipeline.json');
+  const sources = JSON.parse(readFileSync(sourcesPath, 'utf-8')) as {
+    light_web_queries?: string[];
+  };
+  const pipeline = JSON.parse(readFileSync(pipelinePath, 'utf-8')) as {
+    steps: {
+      gatherLightWeb: { model: string; temperature: number; max_tokens: number; tools: string[] };
+    };
+  };
+
+  const queries = sources.light_web_queries ?? [];
+  if (queries.length === 0) return '';
+
+  const cfg = pipeline.steps.gatherLightWeb;
+  const monthYear = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+  const results = await Promise.all(
+    queries.map((query, i) => {
+      const expanded = query.replace('{MONTH} {YEAR}', monthYear);
+      return callClaude({
+        systemPrompt:
+          'Find 5 recent AI news items matching this query. For each item return: headline (one sentence), source URL, publication date. Return plain text, no markdown. Focus on items from the last 7 days.',
+        userMessage: expanded,
+        model: cfg.model,
+        temperature: cfg.temperature,
+        maxTokens: cfg.max_tokens,
+        tools: cfg.tools,
+      }).catch(err => {
+        console.warn(`[sources] light web query ${i + 1} failed:`, err);
+        return '';
+      });
+    })
+  );
+
+  return results.filter(Boolean).join('\n\n');
+}

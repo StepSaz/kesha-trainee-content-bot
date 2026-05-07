@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchSourceContext } from '../sources.js';
+import { fetchSourceContext, fetchLightWebSearch } from '../sources.js';
+import { callClaude } from '../claude.js';
 
 // Mocking @netlify/blobs so cache always misses in tests (non-Netlify env).
 vi.mock('@netlify/blobs', () => ({
@@ -8,6 +9,9 @@ vi.mock('@netlify/blobs', () => ({
     setJSON: vi.fn().mockResolvedValue(undefined),
   }),
 }));
+vi.mock('../claude.js', () => ({ callClaude: vi.fn() }));
+
+const mockCallClaude = vi.mocked(callClaude);
 
 const SAMPLE_FEED = {
   sortMode: 'week',
@@ -154,5 +158,62 @@ describe('fetchSourceContext — RSS feeds', () => {
     // Should not throw — RSS failure is non-fatal
     const { context } = await fetchSourceContext();
     expect(context).toContain('Hacker News');
+  });
+});
+
+describe('fetchLightWebSearch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('concatenates results from all 4 queries', async () => {
+    mockCallClaude
+      .mockResolvedValueOnce('result A')
+      .mockResolvedValueOnce('result B')
+      .mockResolvedValueOnce('result C')
+      .mockResolvedValueOnce('result D');
+
+    const result = await fetchLightWebSearch();
+
+    expect(mockCallClaude).toHaveBeenCalledTimes(4);
+    expect(result).toContain('result A');
+    expect(result).toContain('result B');
+    expect(result).toContain('result C');
+    expect(result).toContain('result D');
+  });
+
+  it('returns empty string when all queries fail', async () => {
+    mockCallClaude.mockRejectedValue(new Error('network error'));
+
+    const result = await fetchLightWebSearch();
+
+    expect(result).toBe('');
+  });
+
+  it('returns partial results when some queries fail', async () => {
+    mockCallClaude
+      .mockResolvedValueOnce('result A')
+      .mockRejectedValueOnce(new Error('fail'))
+      .mockResolvedValueOnce('result C')
+      .mockRejectedValueOnce(new Error('fail'));
+
+    const result = await fetchLightWebSearch();
+
+    expect(result).toContain('result A');
+    expect(result).toContain('result C');
+    expect(result).not.toContain('result B');
+  });
+
+  it('injects current month and year into queries', async () => {
+    mockCallClaude.mockResolvedValue('some result');
+
+    await fetchLightWebSearch();
+
+    const year = new Date().getFullYear().toString();
+    const calls = mockCallClaude.mock.calls;
+    expect(calls.length).toBe(4);
+    calls.forEach(([args]) => {
+      expect(args.userMessage).toContain(year);
+    });
   });
 });
