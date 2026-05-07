@@ -31,7 +31,7 @@ interface TelegramMessage {
   chat: TelegramChat;
   text?: string;
   caption?: string;
-  document?: { file_id: string; file_name?: string; mime_type?: string };
+  document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
   reply_to_message?: { message_id: number; text?: string };
 }
 
@@ -431,10 +431,19 @@ async function handleNotes(message: TelegramMessage): Promise<void> {
     return;
   }
 
-  const doc = message.document!;
+  if (!message.document) {
+    await sendMessage(chatId, '❌ Прикрепи .md файл.');
+    return;
+  }
+  const doc = message.document;
   const fileName = doc.file_name ?? '';
   if (!fileName.toLowerCase().endsWith('.md')) {
     await sendMessage(chatId, '❌ Нужен .md файл.');
+    return;
+  }
+
+  if ((doc.file_size ?? 0) > 50_000) {
+    await sendMessage(chatId, `❌ Файл слишком большой (макс 50 000 байт).`);
     return;
   }
 
@@ -465,9 +474,17 @@ async function handleNotes(message: TelegramMessage): Promise<void> {
       return;
     }
 
-    const downloadRes = await fetch(
-      `https://api.telegram.org/file/bot${token}/${fileData.result.file_path}`
-    );
+    const downloadController = new AbortController();
+    const downloadTimeout = setTimeout(() => downloadController.abort(), 30_000);
+    let downloadRes: Response;
+    try {
+      downloadRes = await fetch(
+        `https://api.telegram.org/file/bot${token}/${fileData.result.file_path}`,
+        { signal: downloadController.signal }
+      );
+    } finally {
+      clearTimeout(downloadTimeout);
+    }
     if (!downloadRes.ok) {
       await editMessageText(chatId, progressMessageId,
         `❌ Не удалось скачать файл: ${downloadRes.status}`);
@@ -568,6 +585,8 @@ export default async (req: Request): Promise<Response> => {
     await handleCommand(msg);
   } else if (msg?.caption?.startsWith('/notes') && msg.document) {
     await handleNotes(msg);
+  } else if (msg?.caption?.startsWith('/notes')) {
+    await sendMessage(String(msg.chat.id), 'Прикрепи именно .md файл — другие типы не поддерживаются.');
   } else if (msg?.text?.match(/^\/notes/)) {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg && msg.reply_to_message && msg.from.id === 352830345) {
