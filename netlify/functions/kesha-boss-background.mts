@@ -33,6 +33,7 @@ interface TelegramMessage {
   caption?: string;
   document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
   reply_to_message?: { message_id: number; text?: string };
+  message_thread_id?: number;
 }
 
 interface TelegramCallbackQuery {
@@ -363,14 +364,15 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   const config = readBossConfig();
   if (!config.allowed_user_ids.includes(message.from.id)) return;
 
-  const replyToId = message.reply_to_message?.message_id;
-  if (!replyToId) return;
-
   if (!message.text) return;
+
+  // thread ID for direct comments on channel posts; reply_to_message.message_id for nested replies
+  const threadId = message.message_thread_id ?? message.reply_to_message?.message_id;
+  if (!threadId) return;
 
   const chatId = String(message.chat.id);
   const store = getStore('kesha');
-  const rateKey = `comment-rate:${chatId}:${replyToId}`;
+  const rateKey = `comment-rate:${chatId}:${threadId}`;
   const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
   const expiresAt = new Date(Date.now() + thirtyDaysMs).toISOString();
 
@@ -388,7 +390,7 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   });
 
   const intent = parseCommentIntent(message.text);
-  const postText = message.reply_to_message?.text ?? '';
+  const postText = message.reply_to_message?.text ?? '[текст поста недоступен]';
 
   const intentInstructions: Record<CommentIntent, string> = {
     expand: 'Степан просит развернуть тему подробнее. Напиши 2-3 абзаца, углубись в детали.',
@@ -584,7 +586,7 @@ export default async (req: Request): Promise<Response> => {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg?.text?.match(/^\/notes/)) {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
-  } else if (msg && msg.reply_to_message && msg.from.id === 352830345) {
+  } else if (msg && msg.from?.id === 352830345 && (msg.message_thread_id || msg.reply_to_message)) {
     await handleCommentReply(msg);
   }
 
