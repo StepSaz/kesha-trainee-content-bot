@@ -236,7 +236,18 @@ export async function fetchLightWebSearch(): Promise<string> {
   if (queries.length === 0) return '';
 
   const cfg = pipeline.steps.gatherLightWeb;
-  const monthYear = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const now = new Date();
+  const monthYear = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const today = now.toISOString().slice(0, 10);
+  const cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const systemPrompt =
+    `Today is ${today}. Find 5 AI news items published between ${cutoff} and ${today}.\n` +
+    'For each item return: headline (one sentence), source URL, publication date.\n' +
+    'Rules:\n' +
+    '- Only include items published on or after ' + cutoff + '. Skip anything older.\n' +
+    '- Only use URLs that appear in your web search results. Never invent or guess URLs.\n' +
+    '- Return plain text only, no markdown.';
 
   // Sequential to avoid hitting the Haiku 50k input tokens/minute rate limit.
   // These still run in parallel with HN fetch (the real latency win).
@@ -244,8 +255,7 @@ export async function fetchLightWebSearch(): Promise<string> {
   for (let i = 0; i < queries.length; i++) {
     const expanded = queries[i].replace('{MONTH} {YEAR}', monthYear);
     const result = await callClaude({
-      systemPrompt:
-        'Find 5 recent AI news items matching this query. For each item return: headline (one sentence), source URL, publication date. Return plain text, no markdown. Focus on items from the last 7 days.',
+      systemPrompt,
       userMessage: expanded,
       model: cfg.model,
       temperature: cfg.temperature,
