@@ -14,6 +14,7 @@ import {
 import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
 import { callClaude } from '../../src/lib/claude.js';
+import { validateStream } from '../../src/lib/validator.js';
 
 interface TelegramUser {
   id: number;
@@ -29,6 +30,8 @@ interface TelegramMessage {
   from: TelegramUser;
   chat: TelegramChat;
   text?: string;
+  caption?: string;
+  document?: { file_id: string; file_name?: string; mime_type?: string };
   reply_to_message?: { message_id: number; text?: string };
 }
 
@@ -419,6 +422,124 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   }
 }
 
+async function handleNotes(message: TelegramMessage): Promise<void> {
+  const chatId = String(message.chat.id);
+  const config = readBossConfig();
+
+  if (!config.allowed_user_ids.includes(message.from.id)) {
+    await sendMessage(chatId, 'Только для начальника 🐤');
+    return;
+  }
+
+  const doc = message.document!;
+  const fileName = doc.file_name ?? '';
+  if (!fileName.toLowerCase().endsWith('.md')) {
+    await sendMessage(chatId, '❌ Нужен .md файл.');
+    return;
+  }
+
+  const progressResult = await sendMessage(chatId, '📝 Читаю нотсы...');
+  if (!progressResult.success || !progressResult.messageId) {
+    console.error('[notes] failed to send progress message:', progressResult.error);
+    return;
+  }
+  const progressMessageId = progressResult.messageId;
+  const channelId = process.env.TELEGRAM_CHAT_ID!;
+  const token = process.env.TELEGRAM_BOT_TOKEN!;
+
+  try {
+    // Download file from Telegram
+    const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_id: doc.file_id }),
+    });
+    const fileData = await fileRes.json() as {
+      ok: boolean;
+      result?: { file_path: string };
+      description?: string;
+    };
+    if (!fileData.ok || !fileData.result) {
+      await editMessageText(chatId, progressMessageId,
+        `❌ Не удалось получить файл: ${fileData.description ?? 'unknown error'}`);
+      return;
+    }
+
+    const downloadRes = await fetch(
+      `https://api.telegram.org/file/bot${token}/${fileData.result.file_path}`
+    );
+    if (!downloadRes.ok) {
+      await editMessageText(chatId, progressMessageId,
+        `❌ Не удалось скачать файл: ${downloadRes.status}`);
+      return;
+    }
+    const content = await downloadRes.text();
+
+    if (content.length > 50_000) {
+      await editMessageText(chatId, progressMessageId,
+        `❌ Файл слишком большой (${content.length} символов, макс 50 000).`);
+      return;
+    }
+
+    // Generate post
+    await editMessageText(chatId, progressMessageId, '✍️ Пишу пост...');
+    const systemPrompt = readFileSync(join(process.cwd(), 'src/config/notes-persona.txt'), 'utf-8');
+    const generatedPost = await callClaude({
+      systemPrompt,
+      userMessage: content,
+      model: 'claude-sonnet-4-6',
+      temperature: 0.7,
+      maxTokens: 2048,
+    });
+
+    if (!generatedPost) {
+      await editMessageText(chatId, progressMessageId, '❌ Claude вернул пустой ответ.');
+      return;
+    }
+
+    const validation = validateStream(generatedPost);
+    if (!validation.valid) {
+      await editMessageText(chatId, progressMessageId,
+        `❌ Пост не прошёл валидацию: ${validation.errors.join(', ')}`);
+      return;
+    }
+
+    // Save preview
+    const previewId = crypto.randomUUID();
+    const store = getStore('kesha');
+    const keyboard: InlineKeyboard = {
+      inline_keyboard: [[
+        { text: '✅ Постить', callback_data: `confirm:${previewId}` },
+        { text: '❌ Отмена', callback_data: `cancel:${previewId}` },
+      ]],
+    };
+
+    await editMessageText(chatId, progressMessageId,
+      '👀 Готово. Превью ниже — подтверди публикацию.');
+
+    const previewMsg = await sendMessage(chatId, generatedPost, { replyMarkup: keyboard });
+    if (!previewMsg.success || !previewMsg.messageId) {
+      console.error('[notes] failed to send preview message:', previewMsg.error);
+      await editMessageText(chatId, progressMessageId, '❌ Не удалось отправить превью.');
+      return;
+    }
+
+    const pending: PendingPreview = {
+      userId: message.from.id,
+      chatId,
+      previewMessageId: previewMsg.messageId,
+      finalText: generatedPost,
+      channelId,
+      createdAt: new Date().toISOString(),
+    };
+    await store.setJSON(`boss-preview:${previewId}`, pending);
+    console.log(`[notes] preview saved previewId=${previewId}`);
+  } catch (err) {
+    console.error('[notes] unexpected error:', err);
+    await editMessageText(chatId, progressMessageId, `❌ Что-то пошло не так: ${String(err)}`);
+  }
+}
+
 export default async (req: Request): Promise<Response> => {
   let update: TelegramUpdate;
   try {
@@ -445,6 +566,10 @@ export default async (req: Request): Promise<Response> => {
     await handleDigest(msg);
   } else if (msg?.text?.match(/^\/boss/)) {
     await handleCommand(msg);
+  } else if (msg?.caption?.startsWith('/notes') && msg.document) {
+    await handleNotes(msg);
+  } else if (msg?.text?.match(/^\/notes/)) {
+    await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg && msg.reply_to_message && msg.from.id === 352830345) {
     await handleCommentReply(msg);
   }
