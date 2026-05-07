@@ -238,23 +238,25 @@ export async function fetchLightWebSearch(): Promise<string> {
   const cfg = pipeline.steps.gatherLightWeb;
   const monthYear = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
-  const results = await Promise.all(
-    queries.map((query, i) => {
-      const expanded = query.replace('{MONTH} {YEAR}', monthYear);
-      return callClaude({
-        systemPrompt:
-          'Find 5 recent AI news items matching this query. For each item return: headline (one sentence), source URL, publication date. Return plain text, no markdown. Focus on items from the last 7 days.',
-        userMessage: expanded,
-        model: cfg.model,
-        temperature: cfg.temperature,
-        maxTokens: cfg.max_tokens,
-        tools: cfg.tools,
-      }).catch(err => {
-        console.warn(`[sources] light web query ${i + 1} failed:`, err);
-        return '';
-      });
-    })
-  );
+  // Sequential to avoid hitting the Haiku 50k input tokens/minute rate limit.
+  // These still run in parallel with HN fetch (the real latency win).
+  const results: string[] = [];
+  for (let i = 0; i < queries.length; i++) {
+    const expanded = queries[i].replace('{MONTH} {YEAR}', monthYear);
+    const result = await callClaude({
+      systemPrompt:
+        'Find 5 recent AI news items matching this query. For each item return: headline (one sentence), source URL, publication date. Return plain text, no markdown. Focus on items from the last 7 days.',
+      userMessage: expanded,
+      model: cfg.model,
+      temperature: cfg.temperature,
+      maxTokens: cfg.max_tokens,
+      tools: cfg.tools,
+    }).catch(err => {
+      console.warn(`[sources] light web query ${i + 1} failed:`, err);
+      return '';
+    });
+    results.push(result);
+  }
 
   return results.filter(Boolean).join('\n\n');
 }
