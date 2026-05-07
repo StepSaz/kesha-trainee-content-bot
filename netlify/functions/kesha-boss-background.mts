@@ -586,7 +586,7 @@ export default async (req: Request): Promise<Response> => {
   } else if (msg?.caption?.startsWith('/notes') && msg.document) {
     await handleNotes(msg);
   } else if (msg?.caption?.startsWith('/notes')) {
-    await sendMessage(String(msg.chat.id), 'Прикрепи именно .md файл — другие типы не поддерживаются.');
+    await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg?.text?.match(/^\/notes/)) {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg && msg.reply_to_message && msg.from.id === 352830345) {
