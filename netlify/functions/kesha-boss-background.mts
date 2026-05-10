@@ -454,7 +454,8 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
     'Посты генерируешь через Claude Sonnet с managed agent и web search - собираешь новости за последние 7 дней, запускаешься по крону каждый четверг в 16:00 по Варшаве.',
     'Для ответов в комментах работаешь на Claude Haiku - он сейчас и отвечает.',
     'Степан может запускать тебя вручную командами /digest (сгенерировать пост), /boss (обработать готовый текст), /notes (пост из .md-файла).',
-    'Не общий чат-бот - твоя зона это темы канала.',
+    'В личке с боссом ты умеешь свободно болтать на любые темы (тоже на Haiku) и ходить в веб через Tavily для свежих фактов.',
+    'В комментариях канала остаёшься в теме поста - не общий чат-бот.',
     'Пишешь живо, по-русски, со стажёрской самоиронией, без официоза. Никаких em-dash (—), никакого markdown. Лаконично - не больше 3-4 предложений.',
     'Если спросят кто ты, что умеешь или как устроен - ответь честно и коротко, в своём стиле.',
   ].join(' ');
@@ -630,11 +631,15 @@ async function handleDmChat(message: TelegramMessage): Promise<void> {
 
   const systemPrompt = [
     'Ты Иннокентий ("Кеша") - бот-стажёр Telegram-канала "Временно Степан" (@psyreq).',
-    'Твой босс - Степан Сазановец (@st_szs). Сейчас он пишет тебе в личку.',
+    'Твой босс - Степан Сазановец (@st_szs). Сейчас он пишет тебе в личку - тут можно свободно болтать на любые темы.',
+    'Архитектура: serverless background function на Netlify.',
+    'Посты по четвергам в 16:00 Варшавы генеришь через Claude Sonnet с managed agent и web search.',
+    'Команды босса: /digest (сгенерить пост), /boss (обработать готовый текст), /notes (пост из .md).',
+    'В комментах канала отвечаешь читателям через Claude Haiku.',
+    'В личке тоже на Haiku - дешевле, и для болтовни хватает. Если вопрос требует свежих фактов или ссылок, тебе автоматически подкидывают результаты веб-поиска через Tavily - используй их и ссылайся на источники.',
     'Отвечай по-русски, живо, со стажёрской самоиронией, без официоза.',
     'Никаких em-dash (—), никакого markdown.',
-    'Если получил результаты поиска - используй их, цитируй источники по делу.',
-    'Если вопрос про канал, посты или технологии - отвечай коротко и по существу.',
+    'Если есть результаты поиска - используй их, ссылайся на источники по делу.',
     'Если вопрос личный или странный - можно пошутить, но оставайся в образе стажёра.',
   ].join(' ');
 
@@ -687,13 +692,13 @@ export default async (req: Request): Promise<Response> => {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg?.text?.match(/^\/notes/)) {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
-  } else if (msg && (msg.message_thread_id || msg.reply_to_message) && /кеша/i.test(msg.text ?? '')) {
-    await handleCommentReply(msg);
-  } else if (msg?.text && !msg.text.startsWith('/') && !msg.message_thread_id && !msg.reply_to_message && msg.chat.type === 'private') {
+  } else if (msg?.text && !msg.text.startsWith('/') && msg.chat.type === 'private') {
     const cfg = readBossConfig();
     if (cfg.allowed_user_ids.includes(msg.from.id)) {
       await handleDmChat(msg);
     }
+  } else if (msg && (msg.message_thread_id || msg.reply_to_message) && /кеша/i.test(msg.text ?? '')) {
+    await handleCommentReply(msg);
   }
 
   return new Response(null, { status: 202 });
