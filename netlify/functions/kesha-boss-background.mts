@@ -18,6 +18,7 @@ import { validateNotes } from '../../src/lib/validator.js';
 
 interface TelegramUser {
   id: number;
+  first_name?: string;
   username?: string;
 }
 
@@ -55,6 +56,11 @@ interface BossConfig {
   min_input_length: number;
   max_input_length: number;
   preview_timeout_minutes: number;
+  comment_reply?: {
+    per_thread_limit: number;
+    per_user_spam_threshold: number;
+    per_user_window_hours: number;
+  };
 }
 
 interface PendingPreview {
@@ -361,9 +367,6 @@ function parseCommentIntent(text: string): CommentIntent {
 }
 
 async function handleCommentReply(message: TelegramMessage): Promise<void> {
-  const config = readBossConfig();
-  if (!config.allowed_user_ids.includes(message.from.id)) return;
-
   if (!message.text) return;
 
   // thread ID for direct comments on channel posts; reply_to_message.message_id for nested replies
@@ -371,38 +374,78 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   if (!threadId) return;
 
   const chatId = String(message.chat.id);
+  const config = readBossConfig();
+  const commentCfg = config.comment_reply ?? { per_thread_limit: 5, per_user_spam_threshold: 7, per_user_window_hours: 24 };
   const store = getStore('kesha');
+
+  // Per-user spam guard (rolling window)
+  const userRateKey = `comment-rate-user:${message.from.id}`;
+  const userWindowMs = commentCfg.per_user_window_hours * 60 * 60 * 1000;
+  const userExpiresAt = new Date(Date.now() + userWindowMs).toISOString();
+  const userExisting = await store.getWithMetadata(userRateKey, { type: 'json' });
+  const userCurrentCount = (userExisting?.data as number | null) ?? 0;
+  const userStoredExpiry = userExisting?.metadata?.expiresAt as string | undefined;
+  const userEffectiveCount = userStoredExpiry && new Date() > new Date(userStoredExpiry) ? 0 : userCurrentCount;
+
+  // Already muted in this window - stay silent
+  if (userEffectiveCount >= commentCfg.per_user_spam_threshold) return;
+
+  const newUserCount = userEffectiveCount + 1;
+  await store.setJSON(userRateKey, newUserCount, { metadata: { expiresAt: userExpiresAt } });
+
+  // Threshold hit on this message - send soft mute notice to user, alert boss, skip Claude
+  if (newUserCount === commentCfg.per_user_spam_threshold) {
+    await sendMessage(chatId,
+      'К сожалению, босс не разрешает мне пока вести длинные диалоги, так что я ненадолго замолкаю. Возвращайтесь попозже 🐤',
+      { replyToMessageId: message.message_id }
+    );
+    const userTag = message.from.username
+      ? `@${message.from.username}`
+      : (message.from.first_name ?? String(message.from.id));
+    const bossId = String(config.allowed_user_ids[0]);
+    await sendMessage(bossId,
+      `⚠️ Кеша замьютировал ${userTag} — достиг лимита ${commentCfg.per_user_spam_threshold} вопросов за ${commentCfg.per_user_window_hours}ч.`
+    );
+    return;
+  }
+
+  // Per-thread rate limit
   const rateKey = `comment-rate:${chatId}:${threadId}`;
   const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
   const expiresAt = new Date(Date.now() + thirtyDaysMs).toISOString();
-
   const existing = await store.getWithMetadata(rateKey, { type: 'json' });
   const currentCount = (existing?.data as number | null) ?? 0;
   const storedExpiry = existing?.metadata?.expiresAt as string | undefined;
-
-  // If the blob exists but has passed its logical expiry, treat count as 0
   const effectiveCount = storedExpiry && new Date() > new Date(storedExpiry) ? 0 : currentCount;
 
-  if (effectiveCount >= 3) return;
+  if (effectiveCount >= commentCfg.per_thread_limit) return;
 
-  await store.setJSON(rateKey, effectiveCount + 1, {
-    metadata: { expiresAt },
-  });
+  await store.setJSON(rateKey, effectiveCount + 1, { metadata: { expiresAt } });
 
   const intent = parseCommentIntent(message.text);
   const postText = message.reply_to_message?.text ?? '[текст поста недоступен]';
+  const userName = message.from.first_name ?? message.from.username ?? 'Читатель';
 
   const intentInstructions: Record<CommentIntent, string> = {
-    expand: 'Степан просит развернуть тему подробнее. Напиши 2-3 абзаца, углубись в детали.',
-    explain: 'Степан просит объяснить проще. Объясни как для умного нетехнического человека.',
-    compare: 'Степан просит сравнение. Сравни кратко — что лучше, хуже, в каком контексте.',
-    freeform: 'Степан написал комментарий к посту. Ответь по делу, в своём стиле стажёра.',
+    expand: `${userName} просит развернуть тему подробнее. Напиши 2-3 абзаца, углубись в детали.`,
+    explain: `${userName} просит объяснить проще. Объясни как для умного нетехнического человека.`,
+    compare: `${userName} просит сравнение. Сравни кратко — что лучше, хуже, в каком контексте.`,
+    freeform: `${userName} написал комментарий к посту. Ответь по делу, в своём стиле стажёра.`,
   };
+
+  const systemPrompt = [
+    'Ты Иннокентий ("Кеша") - бот-стажёр Telegram-канала "Временно Степан" (@psyreq).',
+    'Твой босс - Степан Сазановец (@st_szs). По четвергам ты публикуешь дайджест новостей про AI, tech, vibe coding и инструменты для IT.',
+    'В комментариях ты помогаешь читателям: объясняешь термины из поста, разворачиваешь темы подробнее, сравниваешь технологии, обсуждаешь по делу.',
+    'Под капотом у тебя Claude Haiku от Anthropic. Не общий чат-бот - твоя зона это темы канала.',
+    'Пишешь живо, по-русски, со стажёрской самоиронией, без официоза. Никаких em-dash (—), никакого markdown. Лаконично - не больше 3-4 предложений.',
+    'Если спросят кто ты или что умеешь - ответь честно и коротко.',
+  ].join(' ');
 
   try {
     const response = await callClaude({
-      systemPrompt: 'Ты Кеша - стажёр-бот в Telegram-канале. Пишешь живо, по-русски, без официоза. Никаких em-dash (—), никакого markdown. Лаконично - не больше 3-4 предложений.',
-      userMessage: `Контекст поста:\n${postText}\n\nКомментарий Степана: "${message.text}"\n\n${intentInstructions[intent]}`,
+      systemPrompt,
+      userMessage: `Контекст поста:\n${postText}\n\nКомментарий ${userName}: "${message.text}"\n\n${intentInstructions[intent]}`,
       model: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       maxTokens: 300,
@@ -586,7 +629,7 @@ export default async (req: Request): Promise<Response> => {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg?.text?.match(/^\/notes/)) {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
-  } else if (msg && msg.from?.id === 352830345 && (msg.message_thread_id || msg.reply_to_message) && /кеша/i.test(msg.text ?? '')) {
+  } else if (msg && (msg.message_thread_id || msg.reply_to_message) && /кеша/i.test(msg.text ?? '')) {
     await handleCommentReply(msg);
   }
 

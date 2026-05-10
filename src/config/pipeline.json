@@ -53,6 +53,11 @@
     "min_input_length": 50,
     "max_input_length": 3500,
     "preview_timeout_minutes": 30,
+    "comment_reply": {
+      "per_thread_limit": 5,
+      "per_user_spam_threshold": 7,
+      "per_user_window_hours": 24
+    },
     "models": {
       "review": {
         "model": "claude-sonnet-4-6",
