@@ -387,19 +387,26 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   const userStoredExpiry = userExisting?.metadata?.expiresAt as string | undefined;
   const userEffectiveCount = userStoredExpiry && new Date() > new Date(userStoredExpiry) ? 0 : userCurrentCount;
 
+  // Already muted in this window - stay silent
   if (userEffectiveCount >= commentCfg.per_user_spam_threshold) return;
 
-  await store.setJSON(userRateKey, userEffectiveCount + 1, { metadata: { expiresAt: userExpiresAt } });
+  const newUserCount = userEffectiveCount + 1;
+  await store.setJSON(userRateKey, newUserCount, { metadata: { expiresAt: userExpiresAt } });
 
-  // Alert boss when user hits the spam threshold
-  if (userEffectiveCount + 1 === commentCfg.per_user_spam_threshold) {
+  // Threshold hit on this message - send soft mute notice to user, alert boss, skip Claude
+  if (newUserCount === commentCfg.per_user_spam_threshold) {
+    await sendMessage(chatId,
+      'К сожалению, босс не разрешает мне пока вести длинные диалоги, так что я ненадолго замолкаю. Возвращайтесь попозже 🐤',
+      { replyToMessageId: message.message_id }
+    );
     const userTag = message.from.username
       ? `@${message.from.username}`
       : (message.from.first_name ?? String(message.from.id));
     const bossId = String(config.allowed_user_ids[0]);
     await sendMessage(bossId,
-      `⚠️ Кеша замьютировал ${userTag} — слишком много вопросов за ${commentCfg.per_user_window_hours}ч (>${commentCfg.per_user_spam_threshold}).`
+      `⚠️ Кеша замьютировал ${userTag} — достиг лимита ${commentCfg.per_user_spam_threshold} вопросов за ${commentCfg.per_user_window_hours}ч.`
     );
+    return;
   }
 
   // Per-thread rate limit
