@@ -15,6 +15,7 @@ import { generatePipelinePost, extractIntro, type PipelineResult } from '../../s
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
 import { callClaude } from '../../src/lib/claude.js';
 import { validateNotes } from '../../src/lib/validator.js';
+import { tavilySearch } from '../../src/lib/tavily.js';
 
 interface TelegramUser {
   id: number;
@@ -612,6 +613,47 @@ async function handleNotes(message: TelegramMessage): Promise<void> {
   }
 }
 
+async function handleDmChat(message: TelegramMessage): Promise<void> {
+  if (!message.text) return;
+  const chatId = String(message.chat.id);
+  const userName = message.from.first_name ?? message.from.username ?? 'Степан';
+
+  const searchResults = await tavilySearch(message.text, 5);
+
+  let searchContext = '';
+  if (searchResults.length > 0) {
+    searchContext = '\n\nРезультаты веб-поиска:\n' + searchResults
+      .map(r => `- ${r.title}: ${r.content.slice(0, 400)}`)
+      .join('\n');
+  }
+
+  const systemPrompt = [
+    'Ты Иннокентий ("Кеша") - бот-стажёр Telegram-канала "Временно Степан" (@psyreq).',
+    'Твой босс - Степан Сазановец (@st_szs). Сейчас он пишет тебе в личку.',
+    'Отвечай по-русски, живо, со стажёрской самоиронией, без официоза.',
+    'Никаких em-dash (—), никакого markdown.',
+    'Если получил результаты поиска - используй их, цитируй источники по делу.',
+    'Если вопрос про канал, посты или технологии - отвечай коротко и по существу.',
+    'Если вопрос личный или странный - можно пошутить, но оставайся в образе стажёра.',
+  ].join(' ');
+
+  try {
+    const response = await callClaude({
+      systemPrompt,
+      userMessage: `${userName}: ${message.text}${searchContext}`,
+      model: 'claude-opus-4-7',
+      temperature: 0.7,
+      maxTokens: 1024,
+    });
+
+    if (response) {
+      await sendMessage(chatId, response);
+    }
+  } catch (err) {
+    console.error('[dm-chat] error:', err);
+  }
+}
+
 export default async (req: Request): Promise<Response> => {
   let update: TelegramUpdate;
   try {
@@ -646,6 +688,11 @@ export default async (req: Request): Promise<Response> => {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg && (msg.message_thread_id || msg.reply_to_message) && /кеша/i.test(msg.text ?? '')) {
     await handleCommentReply(msg);
+  } else if (msg?.text && !msg.text.startsWith('/') && !msg.message_thread_id && !msg.reply_to_message) {
+    const cfg = readBossConfig();
+    if (cfg.allowed_user_ids.includes(msg.from.id)) {
+      await handleDmChat(msg);
+    }
   }
 
   return new Response(null, { status: 202 });
