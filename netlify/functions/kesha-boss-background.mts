@@ -375,7 +375,7 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
 
   const chatId = String(message.chat.id);
   const config = readBossConfig();
-  const commentCfg = config.comment_reply ?? { per_thread_limit: 5, per_user_spam_threshold: 7, per_user_window_hours: 24 };
+  const commentCfg = config.comment_reply ?? { per_thread_limit: 6, per_user_spam_threshold: 7, per_user_window_hours: 24 };
   const store = getStore('kesha');
 
   // Per-user spam guard (rolling window)
@@ -418,9 +418,20 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   const storedExpiry = existing?.metadata?.expiresAt as string | undefined;
   const effectiveCount = storedExpiry && new Date() > new Date(storedExpiry) ? 0 : currentCount;
 
+  // Already over per-thread limit - stay silent
   if (effectiveCount >= commentCfg.per_thread_limit) return;
 
-  await store.setJSON(rateKey, effectiveCount + 1, { metadata: { expiresAt } });
+  const newThreadCount = effectiveCount + 1;
+  await store.setJSON(rateKey, newThreadCount, { metadata: { expiresAt } });
+
+  // Threshold hit on this message - send notice and skip Claude
+  if (newThreadCount === commentCfg.per_thread_limit) {
+    await sendMessage(chatId,
+      'Кажется, я достиг лимита ответов в этом треде, извините. Спрашивайте под следующим постом 🐤',
+      { replyToMessageId: message.message_id }
+    );
+    return;
+  }
 
   const intent = parseCommentIntent(message.text);
   const postText = message.reply_to_message?.text ?? '[текст поста недоступен]';
