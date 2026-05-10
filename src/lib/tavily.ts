@@ -7,7 +7,10 @@ export interface TavilyResult {
 
 export async function tavilySearch(query: string, maxResults = 5): Promise<TavilyResult[]> {
   const apiKey = process.env.TAVILY_API_KEY;
-  if (!apiKey) return [];
+  if (!apiKey) {
+    console.warn('[tavily] TAVILY_API_KEY not set — skipping search');
+    return [];
+  }
 
   try {
     const res = await fetch('https://api.tavily.com/search', {
@@ -27,7 +30,9 @@ export async function tavilySearch(query: string, maxResults = 5): Promise<Tavil
     }
 
     const data = await res.json() as { results?: TavilyResult[] };
-    return data.results ?? [];
+    const results = data.results ?? [];
+    console.log(`[tavily] query="${query}" results=${results.length}`);
+    return results;
   } catch (err) {
     console.error('[tavily] search error:', err);
     return [];

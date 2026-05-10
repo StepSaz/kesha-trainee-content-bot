@@ -615,38 +615,56 @@ async function handleNotes(message: TelegramMessage): Promise<void> {
   }
 }
 
+function shouldSkipSearch(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 8) return true;
+  const greetings = /^(привет|хай|hi|hello|здаров|здоров|йо|ку|hey)[\s!.,?]*$/i;
+  return greetings.test(trimmed);
+}
+
 async function handleDmChat(message: TelegramMessage): Promise<void> {
   if (!message.text) return;
   const chatId = String(message.chat.id);
   const userName = message.from.first_name ?? message.from.username ?? 'Степан';
 
-  const searchResults = await tavilySearch(message.text, 5);
+  const skipSearch = shouldSkipSearch(message.text);
+  const searchResults = skipSearch ? [] : await tavilySearch(message.text, 5);
 
-  let searchContext = '';
-  if (searchResults.length > 0) {
-    searchContext = '\n\nРезультаты веб-поиска:\n' + searchResults
-      .map(r => `- ${r.title}: ${r.content.slice(0, 400)}`)
-      .join('\n');
-  }
+  console.log(`[dm-chat] user=${userName} skipSearch=${skipSearch} results=${searchResults.length} keySet=${Boolean(process.env.TAVILY_API_KEY)}`);
+
+  const today = new Date().toISOString().slice(0, 10);
 
   const systemPrompt = [
     'Ты Иннокентий ("Кеша") - бот-стажёр Telegram-канала "Временно Степан" (@psyreq).',
     'Твой босс - Степан Сазановец (@st_szs). Сейчас он пишет тебе в личку - тут можно свободно болтать на любые темы.',
+    `Сегодня ${today}. Твоё внутреннее знание устарело — для любых фактов о текущем мире доверяй блоку "СВЕЖИЙ ВЕБ-ПОИСК" в сообщении пользователя выше своих знаний.`,
     'Архитектура: serverless background function на Netlify.',
     'Посты по четвергам в 16:00 Варшавы генеришь через Claude Sonnet с managed agent и web search.',
     'Команды босса: /digest (сгенерить пост), /boss (обработать готовый текст), /notes (пост из .md).',
     'В комментах канала отвечаешь читателям через Claude Haiku.',
-    'В личке тоже на Haiku - дешевле, и для болтовни хватает. Если вопрос требует свежих фактов или ссылок, тебе автоматически подкидывают результаты веб-поиска через Tavily - используй их и ссылайся на источники.',
+    'В личке тоже на Haiku — дешевле, и для болтовни хватает. На каждое сообщение система автоматически дёргает Tavily и кладёт результаты в блок "СВЕЖИЙ ВЕБ-ПОИСК".',
+    'Если блок есть — используй его как первоисточник, ссылайся на URL по делу. Если блока нет или он пустой — честно скажи, что свежей инфы под рукой нет, не выдумывай актуальные факты.',
     'Отвечай по-русски, живо, со стажёрской самоиронией, без официоза.',
     'Никаких em-dash (—), никакого markdown.',
-    'Если есть результаты поиска - используй их, ссылайся на источники по делу.',
-    'Если вопрос личный или странный - можно пошутить, но оставайся в образе стажёра.',
+    'Если вопрос личный или странный — можно пошутить, но оставайся в образе стажёра.',
   ].join(' ');
+
+  let userMessage: string;
+  if (searchResults.length > 0) {
+    const searchBlock = searchResults
+      .map((r, i) => `[${i + 1}] ${r.title}\n    URL: ${r.url}\n    ${r.content.slice(0, 500)}`)
+      .join('\n\n');
+    userMessage = `=== СВЕЖИЙ ВЕБ-ПОИСК (Tavily, ${today}) ===\n${searchBlock}\n=== КОНЕЦ ПОИСКА ===\n\n${userName} спрашивает: ${message.text}`;
+  } else if (!skipSearch) {
+    userMessage = `=== СВЕЖИЙ ВЕБ-ПОИСК ===\n(пусто — поиск не дал результатов или недоступен)\n=== КОНЕЦ ПОИСКА ===\n\n${userName} спрашивает: ${message.text}`;
+  } else {
+    userMessage = `${userName}: ${message.text}`;
+  }
 
   try {
     const response = await callClaude({
       systemPrompt,
-      userMessage: `${userName}: ${message.text}${searchContext}`,
+      userMessage,
       model: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       maxTokens: 1024,
