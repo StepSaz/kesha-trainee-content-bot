@@ -25,6 +25,7 @@ interface TelegramUser {
 
 interface TelegramChat {
   id: number;
+  type?: 'private' | 'group' | 'supergroup' | 'channel';
 }
 
 interface TelegramMessage {
@@ -641,7 +642,7 @@ async function handleDmChat(message: TelegramMessage): Promise<void> {
     const response = await callClaude({
       systemPrompt,
       userMessage: `${userName}: ${message.text}${searchContext}`,
-      model: 'claude-opus-4-7',
+      model: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       maxTokens: 1024,
     });
@@ -688,7 +689,7 @@ export default async (req: Request): Promise<Response> => {
     await sendMessage(String(msg.chat.id), 'Прикрепи .md файл и напиши /notes в подписи к нему.');
   } else if (msg && (msg.message_thread_id || msg.reply_to_message) && /кеша/i.test(msg.text ?? '')) {
     await handleCommentReply(msg);
-  } else if (msg?.text && !msg.text.startsWith('/') && !msg.message_thread_id && !msg.reply_to_message) {
+  } else if (msg?.text && !msg.text.startsWith('/') && !msg.message_thread_id && !msg.reply_to_message && msg.chat.type === 'private') {
     const cfg = readBossConfig();
     if (cfg.allowed_user_ids.includes(msg.from.id)) {
       await handleDmChat(msg);
