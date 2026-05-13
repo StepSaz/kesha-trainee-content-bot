@@ -13,7 +13,7 @@ import {
 } from '../../src/lib/telegram.js';
 import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
-import { callClaude } from '../../src/lib/claude.js';
+import { callClaude, type ConversationTurn } from '../../src/lib/claude.js';
 import { validateNotes } from '../../src/lib/validator.js';
 import { tavilySearch } from '../../src/lib/tavily.js';
 
@@ -446,6 +446,16 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
     freeform: `${userName} написал комментарий к посту. Ответь по делу, в своём стиле стажёра.`,
   };
 
+  // Load per-user conversation history for this thread
+  const historyKey = `comment-history:${chatId}:${threadId}:user:${message.from.id}`;
+  const storedHistory = await store.get(historyKey, { type: 'json' }) as ConversationTurn[] | null;
+  const conversationHistory = storedHistory ?? [];
+
+  // Include post context only in the first message; history carries it for subsequent turns
+  const userMessage = conversationHistory.length === 0
+    ? `Контекст поста:\n${postText}\n\nКомментарий ${userName}: "${message.text}"\n\n${intentInstructions[intent]}`
+    : `${userName}: "${message.text}"\n\n${intentInstructions[intent]}`;
+
   const systemPrompt = [
     'Ты Иннокентий ("Кеша") - бот-стажёр Telegram-канала "Временно Степан" (@psyreq).',
     'Твой босс - Степан Сазановец (@st_szs). По четвергам ты публикуешь дайджест новостей про AI, tech, vibe coding и инструменты для IT.',
@@ -463,16 +473,29 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   try {
     const response = await callClaude({
       systemPrompt,
-      userMessage: `Контекст поста:\n${postText}\n\nКомментарий ${userName}: "${message.text}"\n\n${intentInstructions[intent]}`,
+      userMessage,
       model: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       maxTokens: 300,
+      conversationHistory,
     });
 
     if (!response) {
       console.error('[boss] comment reaction: Claude returned empty response, skipping send');
       return;
     }
+
+    // Persist updated history — keep last 6 turns (12 messages) to cap token cost
+    const MAX_HISTORY_TURNS = 6;
+    const updatedHistory: ConversationTurn[] = ([
+      ...conversationHistory,
+      { role: 'user' as const, content: userMessage },
+      { role: 'assistant' as const, content: response },
+    ] as ConversationTurn[]).slice(-MAX_HISTORY_TURNS * 2);
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    await store.setJSON(historyKey, updatedHistory, {
+      metadata: { expiresAt: new Date(Date.now() + thirtyDaysMs).toISOString() },
+    });
 
     await sendMessage(chatId, response, { replyToMessageId: message.message_id });
   } catch (err) {
