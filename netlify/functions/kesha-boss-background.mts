@@ -14,6 +14,7 @@ import {
 import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
 import { callClaude, type ConversationTurn } from '../../src/lib/claude.js';
+import { appendPublishedPost, loadRecentPosts } from '../../src/lib/recent-posts.js';
 import { validateNotes } from '../../src/lib/validator.js';
 import { tavilySearch } from '../../src/lib/tavily.js';
 
@@ -231,6 +232,7 @@ async function handleCallback(callbackQuery: TelegramCallbackQuery): Promise<voi
     const sendResult = await sendToChannel(pending.finalText, pending.channelId);
     await answerCallbackQuery(callbackQueryId);
     if (sendResult.success) {
+      await appendPublishedPost(pending.finalText, sendResult.messageId ?? null);
       await editMessageText(chatId, previewMessageId, `✅ Опубликовано: t.me/psyreq/${sendResult.messageId}`, { replyMarkup: null });
     } else {
       await editMessageText(chatId, previewMessageId, `❌ Ошибка публикации: ${sendResult.error}`, { replyMarkup: null });
@@ -339,6 +341,8 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
       `❌ Ошибка отправки: ${sendResult.error}`, { replyMarkup: null });
     return;
   }
+
+  await appendPublishedPost(pending.post, sendResult.messageId ?? null);
 
   try {
     await store.setJSON('digest-last-manual-at', { publishedAt: new Date().toISOString() });
@@ -451,14 +455,32 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   const storedHistory = await store.get(historyKey, { type: 'json' }) as ConversationTurn[] | null;
   const conversationHistory = storedHistory ?? [];
 
+  // On first turn: pull last 2 previous posts (excluding the current one) for cross-post context
+  let previousPostsBlock = '';
+  if (conversationHistory.length === 0) {
+    const recentPosts = await loadRecentPosts();
+    const currentPrefix = postText.slice(0, 80);
+    const previous = recentPosts
+      .filter(p => !currentPrefix || p.text.slice(0, 80) !== currentPrefix)
+      .slice(-2);
+    if (previous.length > 0) {
+      const blocks = previous
+        .map(p => `Пост от ${p.publishedAt.slice(0, 10)}:\n${p.text}`)
+        .join('\n\n---\n\n');
+      previousPostsBlock = `\n\nКонтекст 2 предыдущих постов канала (для справки, цитируй только если читатель явно спрашивает про них):\n${blocks}`;
+    }
+  }
+
   // Include post context only in the first message; history carries it for subsequent turns
   const userMessage = conversationHistory.length === 0
-    ? `Контекст поста:\n${postText}\n\nКомментарий ${userName}: "${message.text}"\n\n${intentInstructions[intent]}`
+    ? `Контекст текущего поста:\n${postText}${previousPostsBlock}\n\nКомментарий ${userName}: "${message.text}"\n\n${intentInstructions[intent]}`
     : `${userName}: "${message.text}"\n\n${intentInstructions[intent]}`;
 
   const systemPrompt = [
     'Ты Иннокентий ("Кеша") - бот-стажёр Telegram-канала "Временно Степан" (@psyreq).',
-    'Твой босс - Степан Сазановец (@st_szs). По четвергам ты публикуешь дайджест новостей про AI, tech, vibe coding и инструменты для IT.',
+    'Твой босс - Степан Сазановец (@st_szs): senior business analyst с 10+ годами опыта в IT, разбирается в AI. Портфолио: https://sazanavets-ba.netlify.app/',
+    'Если читатель спрашивает про босса - можешь рассказать эти публичные факты и кинуть ссылку на портфолио. Личные данные (где живёт, доходы, личная жизнь и т.п.) не знаешь и не обсуждаешь.',
+    'По четвергам ты публикуешь дайджест новостей про AI, tech, vibe coding и инструменты для IT.',
     'В комментариях ты помогаешь читателям: объясняешь термины из поста, разворачиваешь темы подробнее, сравниваешь технологии, обсуждаешь по делу.',
     'Архитектура: serverless background function на Netlify.',
     'Посты генерируешь через Claude Sonnet с managed agent и web search - собираешь новости за последние 7 дней, запускаешься по крону каждый четверг в 16:00 по Варшаве.',
