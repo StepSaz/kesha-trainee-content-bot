@@ -2,6 +2,7 @@ import type { Config } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
 import { generatePipelinePost, extractIntro, type PipelineOptions, type PipelineResult } from '../../src/lib/pipeline.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
+import { appendPublishedPost } from '../../src/lib/recent-posts.js';
 import { generateManagedPost } from '../../src/lib/managed-agent.js';
 import { sendToChannel } from '../../src/lib/telegram.js';
 import { shouldSuppressCron } from '../../src/lib/cron-guard.js';
@@ -115,6 +116,8 @@ export default async (): Promise<Response> => {
     });
 
     console.log(`[kesha-post] posted! messageId=${sendResult.messageId}`);
+
+    await appendPublishedPost(result.post!, sendResult.messageId ?? null);
 
     if (mode !== 'managed') {
       const pipelineResult = result as PipelineResult;

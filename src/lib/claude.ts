@@ -1,5 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+export interface ConversationTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface CallClaudeParams {
   systemPrompt: string;
   userMessage: string;
@@ -7,6 +12,7 @@ export interface CallClaudeParams {
   temperature: number;
   maxTokens: number;
   tools?: string[];
+  conversationHistory?: ConversationTurn[];
 }
 
 export async function callClaude(params: CallClaudeParams): Promise<string> {
@@ -19,7 +25,10 @@ export async function callClaude(params: CallClaudeParams): Promise<string> {
   const response = await client.messages.create({
     model: params.model,
     system: params.systemPrompt,
-    messages: [{ role: 'user', content: params.userMessage }],
+    messages: [
+      ...(params.conversationHistory ?? []),
+      { role: 'user', content: params.userMessage },
+    ],
     temperature: params.temperature,
     max_tokens: params.maxTokens,
     ...(tools ? { tools } : {}),
