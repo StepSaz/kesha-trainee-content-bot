@@ -375,7 +375,9 @@ function parseCommentIntent(text: string): CommentIntent {
 async function handleCommentReply(message: TelegramMessage): Promise<void> {
   if (!message.text) return;
 
-  // thread ID for direct comments on channel posts; reply_to_message.message_id for nested replies
+  // message_thread_id is the stable ID of the discussion thread (same for all messages in a thread,
+  // including nested replies). reply_to_message.message_id changes per message and must NOT be used
+  // as a per-thread rate key — it would create a new bucket on every nested reply, bypassing the limit.
   const threadId = message.message_thread_id ?? message.reply_to_message?.message_id;
   if (!threadId) return;
 
@@ -383,6 +385,9 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   const config = readBossConfig();
   const commentCfg = config.comment_reply ?? { per_thread_limit: 6, per_user_spam_threshold: 7, per_user_window_hours: 24 };
   const store = getStore('kesha');
+
+  const userName = message.from.first_name ?? message.from.username ?? 'Читатель';
+  console.log(`[comment] user=${message.from.id} (${userName}) threadId=${threadId} stableThread=${message.message_thread_id ?? 'absent'}`);
 
   // Per-user spam guard (rolling window)
   const userRateKey = `comment-rate-user:${message.from.id}`;
@@ -393,14 +398,20 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   const userStoredExpiry = userExisting?.metadata?.expiresAt as string | undefined;
   const userEffectiveCount = userStoredExpiry && new Date() > new Date(userStoredExpiry) ? 0 : userCurrentCount;
 
+  console.log(`[comment] user=${message.from.id} userCount=${userEffectiveCount}/${commentCfg.per_user_spam_threshold}`);
+
   // Already muted in this window - stay silent
-  if (userEffectiveCount >= commentCfg.per_user_spam_threshold) return;
+  if (userEffectiveCount >= commentCfg.per_user_spam_threshold) {
+    console.log(`[comment] user=${message.from.id} silently muted (over per-user limit)`);
+    return;
+  }
 
   const newUserCount = userEffectiveCount + 1;
   await store.setJSON(userRateKey, newUserCount, { metadata: { expiresAt: userExpiresAt } });
 
   // Threshold hit on this message - send soft mute notice to user, alert boss, skip Claude
   if (newUserCount === commentCfg.per_user_spam_threshold) {
+    console.log(`[comment] user=${message.from.id} muted (hit per-user threshold)`);
     await sendMessage(chatId,
       'К сожалению, босс не разрешает мне пока вести длинные диалоги, так что я ненадолго замолкаю. Возвращайтесь попозже 🐤',
       { replyToMessageId: message.message_id }
@@ -415,33 +426,45 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
     return;
   }
 
-  // Per-thread rate limit
-  const rateKey = `comment-rate:${chatId}:${threadId}`;
-  const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
-  const expiresAt = new Date(Date.now() + thirtyDaysMs).toISOString();
-  const existing = await store.getWithMetadata(rateKey, { type: 'json' });
-  const currentCount = (existing?.data as number | null) ?? 0;
-  const storedExpiry = existing?.metadata?.expiresAt as string | undefined;
-  const effectiveCount = storedExpiry && new Date() > new Date(storedExpiry) ? 0 : currentCount;
+  // Per-thread rate limit.
+  // MUST use message_thread_id — it is stable across ALL messages in a discussion thread including
+  // nested replies. reply_to_message.message_id changes per Kesha message, so using it as a key
+  // would create a new rate bucket on every nested reply, silently bypassing the limit.
+  // When message_thread_id is absent we cannot identify the thread reliably, so we skip
+  // per-thread check and rely solely on the per-user guard above.
+  if (message.message_thread_id) {
+    const rateKey = `comment-rate:${chatId}:${message.message_thread_id}`;
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const expiresAt = new Date(Date.now() + thirtyDaysMs).toISOString();
+    const existing = await store.getWithMetadata(rateKey, { type: 'json' });
+    const currentCount = (existing?.data as number | null) ?? 0;
+    const storedExpiry = existing?.metadata?.expiresAt as string | undefined;
+    const effectiveCount = storedExpiry && new Date() > new Date(storedExpiry) ? 0 : currentCount;
 
-  // Already over per-thread limit - stay silent
-  if (effectiveCount >= commentCfg.per_thread_limit) return;
+    console.log(`[comment] thread=${message.message_thread_id} threadCount=${effectiveCount}/${commentCfg.per_thread_limit}`);
 
-  const newThreadCount = effectiveCount + 1;
-  await store.setJSON(rateKey, newThreadCount, { metadata: { expiresAt } });
+    if (effectiveCount >= commentCfg.per_thread_limit) {
+      console.log(`[comment] thread=${message.message_thread_id} silently limited`);
+      return;
+    }
 
-  // Threshold hit on this message - send notice and skip Claude
-  if (newThreadCount === commentCfg.per_thread_limit) {
-    await sendMessage(chatId,
-      'Кажется, я достиг лимита ответов в этом треде, извините. Спрашивайте под следующим постом 🐤',
-      { replyToMessageId: message.message_id }
-    );
-    return;
+    const newThreadCount = effectiveCount + 1;
+    await store.setJSON(rateKey, newThreadCount, { metadata: { expiresAt } });
+
+    if (newThreadCount === commentCfg.per_thread_limit) {
+      console.log(`[comment] thread=${message.message_thread_id} hit per-thread limit`);
+      await sendMessage(chatId,
+        'Кажется, я достиг лимита ответов в этом треде, извините. Спрашивайте под следующим постом 🐤',
+        { replyToMessageId: message.message_id }
+      );
+      return;
+    }
+  } else {
+    console.log(`[comment] no message_thread_id — skipping per-thread check, per-user guard only`);
   }
 
   const intent = parseCommentIntent(message.text);
   const postText = message.reply_to_message?.text ?? '[текст поста недоступен]';
-  const userName = message.from.first_name ?? message.from.username ?? 'Читатель';
 
   const intentInstructions: Record<CommentIntent, string> = {
     expand: `${userName} просит развернуть тему подробнее. Напиши 2-3 абзаца, углубись в детали.`,
