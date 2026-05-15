@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { sendToChannel, sendMessage, editMessageText, answerCallbackQuery } from '../telegram.js';
+import { sendToChannel, sendMessage, editMessageText, answerCallbackQuery, getFileAsBase64 } from '../telegram.js';
 
 beforeEach(() => {
   process.env.TELEGRAM_BOT_TOKEN = 'test-token';
@@ -176,5 +176,77 @@ describe('answerCallbackQuery', () => {
         body: JSON.stringify({ callback_query_id: 'cq_abc123' }),
       })
     );
+  });
+});
+
+describe('getFileAsBase64', () => {
+  it('returns base64 + mediaType on happy path', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, result: { file_path: 'photos/file_42.jpg' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getFileAsBase64('AgACAgIAxxx');
+
+    expect(result).toEqual({
+      base64: Buffer.from([1, 2, 3, 4]).toString('base64'),
+      mediaType: 'image/jpeg',
+    });
+    expect(fetchMock.mock.calls[0][0]).toContain('/getFile?file_id=AgACAgIAxxx');
+    expect(fetchMock.mock.calls[1][0]).toContain('/file/bottest-token/photos/file_42.jpg');
+  });
+
+  it('detects png from extension', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, result: { file_path: 'photos/file.PNG' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([0]).buffer,
+      }));
+
+    const result = await getFileAsBase64('id');
+
+    expect(result?.mediaType).toBe('image/png');
+  });
+
+  it('returns null when getFile responds with ok:false', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: false, description: 'file too big' }),
+    }));
+
+    const result = await getFileAsBase64('id');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when file download is non-ok', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, result: { file_path: 'photos/x.jpg' } }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 404 }));
+
+    const result = await getFileAsBase64('id');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null on fetch throw', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')));
+
+    const result = await getFileAsBase64('id');
+
+    expect(result).toBeNull();
   });
 });

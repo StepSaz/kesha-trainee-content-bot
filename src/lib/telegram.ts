@@ -115,6 +115,61 @@ export async function editMessageText(
   }
 }
 
+export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+
+const GET_FILE_TIMEOUT_MS = 8_000;
+
+function mediaTypeFromPath(filePath: string): ImageMediaType {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
+}
+
+export async function getFileAsBase64(
+  fileId: string
+): Promise<{ base64: string; mediaType: ImageMediaType } | null> {
+  const token = process.env.TELEGRAM_BOT_TOKEN!;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GET_FILE_TIMEOUT_MS);
+
+  try {
+    const metaRes = await fetch(
+      `https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`,
+      { signal: controller.signal }
+    );
+    const meta = await metaRes.json() as {
+      ok: boolean;
+      result?: { file_path?: string };
+      description?: string;
+    };
+    if (!meta.ok || !meta.result?.file_path) {
+      console.error(`[telegram] getFile failed: ${meta.description ?? 'no file_path'}`);
+      return null;
+    }
+
+    const filePath = meta.result.file_path;
+    const fileRes = await fetch(
+      `https://api.telegram.org/file/bot${token}/${filePath}`,
+      { signal: controller.signal }
+    );
+    if (!fileRes.ok) {
+      console.error(`[telegram] file download failed: ${fileRes.status}`);
+      return null;
+    }
+
+    const buffer = await fileRes.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
+    return { base64, mediaType: mediaTypeFromPath(filePath) };
+  } catch (err) {
+    console.error(`[telegram] getFileAsBase64 error: ${String(err)}`);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN!;
 

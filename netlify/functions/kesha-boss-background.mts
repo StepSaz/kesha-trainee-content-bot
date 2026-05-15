@@ -13,7 +13,8 @@ import {
 } from '../../src/lib/telegram.js';
 import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
-import { callClaude, type ConversationTurn } from '../../src/lib/claude.js';
+import { callClaude, callClaudeWithTools, type ConversationTurn } from '../../src/lib/claude.js';
+import { COMMENT_TOOLS, makeExecuteTool } from '../../src/lib/comment-tools.js';
 import { appendPublishedPost, loadRecentPosts } from '../../src/lib/recent-posts.js';
 import { validateNotes } from '../../src/lib/validator.js';
 import { tavilySearch } from '../../src/lib/tavily.js';
@@ -29,6 +30,31 @@ interface TelegramChat {
   type?: 'private' | 'group' | 'supergroup' | 'channel';
 }
 
+interface TelegramPhotoSize {
+  file_id: string;
+  file_unique_id?: string;
+  width?: number;
+  height?: number;
+  file_size?: number;
+}
+
+interface TelegramEntity {
+  type: string;
+  offset: number;
+  length: number;
+  url?: string;
+}
+
+interface TelegramReplyMessage {
+  message_id: number;
+  text?: string;
+  caption?: string;
+  entities?: TelegramEntity[];
+  caption_entities?: TelegramEntity[];
+  photo?: TelegramPhotoSize[];
+  media_group_id?: string;
+}
+
 interface TelegramMessage {
   message_id: number;
   from: TelegramUser;
@@ -36,7 +62,7 @@ interface TelegramMessage {
   text?: string;
   caption?: string;
   document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
-  reply_to_message?: { message_id: number; text?: string };
+  reply_to_message?: TelegramReplyMessage;
   message_thread_id?: number;
 }
 
@@ -464,7 +490,41 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   }
 
   const intent = parseCommentIntent(message.text);
-  const postText = message.reply_to_message?.text ?? '[текст поста недоступен]';
+  const reply = message.reply_to_message;
+  const postSourceText = reply?.text ?? reply?.caption ?? '';
+  const postText = postSourceText || '[текст поста недоступен]';
+
+  // Extract HTTPS URLs from post entities (both for text posts and captioned media).
+  const sourceForEntities = reply?.text ?? reply?.caption ?? '';
+  const entities = reply?.entities ?? reply?.caption_entities ?? [];
+  const urlSet = new Set<string>();
+  for (const e of entities) {
+    if (e.type === 'text_link' && e.url) {
+      if (/^https?:\/\//i.test(e.url)) urlSet.add(e.url);
+    } else if (e.type === 'url') {
+      const slice = sourceForEntities.slice(e.offset, e.offset + e.length);
+      if (/^https?:\/\//i.test(slice)) urlSet.add(slice);
+    }
+  }
+  const postUrls = Array.from(urlSet).slice(0, 5);
+  const photoFileId = reply?.photo && reply.photo.length > 0
+    ? reply.photo[reply.photo.length - 1].file_id
+    : undefined;
+  const inMediaGroup = !!reply?.media_group_id;
+
+  // Build metadata lines describing what tools can do for this post
+  const metaLines: string[] = [];
+  if (!photoFileId && !inMediaGroup) {
+    metaLines.push('Тип поста: только текст (картинок нет).');
+  } else if (photoFileId && !inMediaGroup) {
+    metaLines.push('Тип поста: текст с одной картинкой. Чтобы посмотреть её содержимое — вызови view_image().');
+  } else if (photoFileId && inMediaGroup) {
+    metaLines.push('Тип поста: одна картинка из медиагруппы — ты видишь только её, остальные недоступны. Если читатель спросит про другие картинки в посте, честно скажи, что не видишь их. Чтобы посмотреть доступную картинку — view_image().');
+  }
+  if (postUrls.length > 0) {
+    metaLines.push(`Ссылки в посте: ${postUrls.join(' ')}. Если читателю важно узнать, что по конкретной ссылке — вызови extract_url(url).`);
+  }
+  const postMeta = metaLines.length > 0 ? `\n${metaLines.join('\n')}` : '';
 
   const intentInstructions: Record<CommentIntent, string> = {
     expand: `${userName} просит развернуть тему подробнее. Напиши 2-3 абзаца, углубись в детали.`,
@@ -496,7 +556,7 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
 
   // Include post context only in the first message; history carries it for subsequent turns
   const userMessage = conversationHistory.length === 0
-    ? `Контекст текущего поста:\n${postText}${previousPostsBlock}\n\nКомментарий ${userName}: "${message.text}"\n\n${intentInstructions[intent]}`
+    ? `Контекст текущего поста:\n${postText}${postMeta}${previousPostsBlock}\n\nКомментарий ${userName}: "${message.text}"\n\n${intentInstructions[intent]}`
     : `${userName}: "${message.text}"\n\n${intentInstructions[intent]}`;
 
   const systemPrompt = [
@@ -513,15 +573,20 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
     'В комментариях канала остаёшься в теме поста - не общий чат-бот.',
     'Пишешь живо, по-русски, со стажёрской самоиронией, без официоза. Никаких em-dash (—), никакого markdown. Лаконично - не больше 3-4 предложений.',
     'Если спросят кто ты, что умеешь или как устроен - ответь честно и коротко, в своём стиле.',
+    'У тебя есть инструменты view_image (посмотреть прикреплённую картинку) и extract_url (открыть ссылку из поста). Используй их только если содержимое реально нужно для ответа — не злоупотребляй.',
   ].join(' ');
 
   try {
-    const response = await callClaude({
+    const executeTool = makeExecuteTool({ photoFileId });
+    const response = await callClaudeWithTools({
       systemPrompt,
       userMessage,
       model: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       maxTokens: 300,
+      tools: COMMENT_TOOLS,
+      executeTool,
+      maxIterations: 3,
       conversationHistory,
     });
 
