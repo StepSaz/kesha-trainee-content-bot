@@ -8,7 +8,7 @@ vi.mock('../memory.js', () => ({
   findCallbacks: vi.fn().mockReturnValue([]),
 }));
 
-import { generatePipelinePost, extractIntro, type SelectedTopics, type ReviewResult } from '../pipeline.js';
+import { generatePipelinePost, extractIntro, type SelectedTopics, type ReviewResult, type TopicExperience } from '../pipeline.js';
 import { callClaude, callClaudeStructured } from '../claude.js';
 import { fetchHackerNewsContext, fetchLightWebSearch } from '../sources.js';
 import { validatePost } from '../validator.js';
@@ -433,6 +433,42 @@ describe('generatePipelinePost with callbacks', () => {
     const generateCallParams = mockCallClaude.mock.calls[0][0];
     expect(generateCallParams.userMessage).toContain('5 недель');
     expect(generateCallParams.userMessage).not.toContain('5 недели');
+  });
+});
+
+describe('generatePipelinePost with experience step', () => {
+  it('calls experienceTopics and passes reactions to generatePost', async () => {
+    const experiences: { experiences: TopicExperience[] } = {
+      experiences: [
+        { topicTitle: 'Topic 1', reaction: 'полез в доку - подозрительно просто', reactionType: 'studied' },
+      ],
+    };
+
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))      // selectTopics
+      .mockResolvedValueOnce(experiences)       // experienceTopics
+      .mockResolvedValueOnce(okReview);         // reviewPost
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
+
+    const result = await generatePipelinePost();
+
+    expect(result.success).toBe(true);
+    expect(mockCallClaudeStructured).toHaveBeenCalledTimes(3); // select + experience + review
+    // Verify experience reactions are passed to generatePost
+    const generateCallParams = mockCallClaude.mock.calls[0][0];
+    expect(generateCallParams.userMessage).toContain('Твоя реакция: полез в доку');
+  });
+
+  it('includes timing for experience step', async () => {
+    mockCallClaudeStructured
+      .mockResolvedValueOnce(okTopics(1))
+      .mockResolvedValueOnce({ experiences: [{ topicTitle: 'Topic 1', reaction: 'test', reactionType: 'hooked' }] })
+      .mockResolvedValueOnce(okReview);
+    mockCallClaude.mockResolvedValueOnce(VALID_POST);
+
+    const result = await generatePipelinePost();
+
+    expect(result.timing).toHaveProperty('experience');
   });
 });
 
