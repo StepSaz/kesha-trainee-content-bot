@@ -118,6 +118,8 @@ export async function editMessageText(
 export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 
 const GET_FILE_TIMEOUT_MS = 8_000;
+// Anthropic image limit is ~5MB post-base64; cap raw bytes a bit below to leave headroom.
+const MAX_IMAGE_BYTES = 4_500_000;
 
 function mediaTypeFromPath(filePath: string): ImageMediaType {
   const lower = filePath.toLowerCase();
@@ -160,6 +162,10 @@ export async function getFileAsBase64(
     }
 
     const buffer = await fileRes.arrayBuffer();
+    if (buffer.byteLength > MAX_IMAGE_BYTES) {
+      console.error(`[telegram] image too large: ${buffer.byteLength} bytes (cap ${MAX_IMAGE_BYTES})`);
+      return null;
+    }
     const base64 = Buffer.from(buffer).toString('base64');
     return { base64, mediaType: mediaTypeFromPath(filePath) };
   } catch (err) {

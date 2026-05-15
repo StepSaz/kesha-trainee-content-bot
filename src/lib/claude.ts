@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import type { ImageMediaType } from './telegram.js';
 
 export interface ConversationTurn {
   role: 'user' | 'assistant';
@@ -46,7 +47,6 @@ export interface ToolDef {
   input_schema: Record<string, unknown>;
 }
 
-export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 export type ToolResult = string | { kind: 'image'; base64: string; mediaType: ImageMediaType };
 
 export interface CallClaudeWithToolsParams {
@@ -70,6 +70,8 @@ function extractText(response: Anthropic.Message): string {
 
 // EXPERIMENT (2026-05-15): tool-use comment replies — see CLAUDE.md
 // Agentic loop: model decides when to call view_image / extract_url.
+// Note: conversationHistory carries only plain-text turns (final user/assistant).
+// Tool roundtrips are appended fresh each call and not persisted by callers.
 export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const messages: Anthropic.MessageParam[] = [
@@ -98,7 +100,7 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
     );
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of toolUseBlocks) {
-      console.log(`[claude:tools] iteration=${i} tool=${block.name} input=${JSON.stringify(block.input)}`);
+      console.log(`[claude:tools] iteration=${i + 1} tool=${block.name} input=${JSON.stringify(block.input)}`);
       const result = await params.executeTool(block.name, block.input as Record<string, unknown>);
       if (typeof result === 'string') {
         toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result });
@@ -124,7 +126,10 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
     temperature: params.temperature,
     max_tokens: params.maxTokens,
   } as any);
-  return extractText(final);
+  const text = extractText(final);
+  // Defensive fallback: if the model still emitted only tool_use (no text) on the no-tools call,
+  // we'd otherwise drop the reply silently. Better to say something honest.
+  return text || 'что-то я завис на этом вопросе, попробуй переформулировать 🐤';
 }
 
 export interface CallClaudeStructuredParams {

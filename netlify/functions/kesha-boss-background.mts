@@ -492,25 +492,27 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   const intent = parseCommentIntent(message.text);
   const reply = message.reply_to_message;
   const postSourceText = reply?.text ?? reply?.caption ?? '';
-  const postText = postSourceText || '[текст поста недоступен]';
-
-  // Extract HTTPS URLs from post entities (both for text posts and captioned media).
-  const sourceForEntities = reply?.text ?? reply?.caption ?? '';
-  const entities = reply?.entities ?? reply?.caption_entities ?? [];
-  const urlSet = new Set<string>();
-  for (const e of entities) {
-    if (e.type === 'text_link' && e.url) {
-      if (/^https?:\/\//i.test(e.url)) urlSet.add(e.url);
-    } else if (e.type === 'url') {
-      const slice = sourceForEntities.slice(e.offset, e.offset + e.length);
-      if (/^https?:\/\//i.test(slice)) urlSet.add(slice);
-    }
-  }
-  const postUrls = Array.from(urlSet).slice(0, 5);
+  const hasCaption = postSourceText.length > 0;
   const photoFileId = reply?.photo && reply.photo.length > 0
     ? reply.photo[reply.photo.length - 1].file_id
     : undefined;
   const inMediaGroup = !!reply?.media_group_id;
+  const postText = hasCaption
+    ? postSourceText
+    : (photoFileId ? '[пост без подписи, только картинка]' : '[текст поста недоступен]');
+
+  // Extract HTTPS URLs from post entities (both for text posts and captioned media).
+  const entities = reply?.entities ?? reply?.caption_entities ?? [];
+  const urlSet = new Set<string>();
+  for (const e of entities) {
+    if (e.type === 'text_link' && e.url) {
+      if (/^https:\/\//i.test(e.url)) urlSet.add(e.url);
+    } else if (e.type === 'url') {
+      const slice = postSourceText.slice(e.offset, e.offset + e.length);
+      if (/^https:\/\//i.test(slice)) urlSet.add(slice);
+    }
+  }
+  const postUrls = Array.from(urlSet).slice(0, 5);
 
   // Build metadata lines describing what tools can do for this post
   const metaLines: string[] = [];

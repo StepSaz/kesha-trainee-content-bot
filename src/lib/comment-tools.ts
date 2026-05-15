@@ -40,7 +40,7 @@ export function makeExecuteTool(
   return async (name, input) => {
     if (name === 'extract_url') {
       const url = typeof input.url === 'string' ? input.url : '';
-      if (!url || !/^https?:\/\//i.test(url)) return 'некорректный URL';
+      if (!url || !/^https:\/\//i.test(url)) return 'некорректный URL';
 
       const cached = urlCache.get(url);
       if (cached !== undefined) return cached;
@@ -49,6 +49,7 @@ export function makeExecuteTool(
       if (!content) {
         let host = url;
         try { host = new URL(url).host; } catch { /* keep url */ }
+        // Cache the fallback too: prevents retrying the same dead URL within one loop.
         const fallback = `не смог открыть ссылку: ${host}`;
         urlCache.set(url, fallback);
         return fallback;
