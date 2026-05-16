@@ -8,7 +8,8 @@
     "setup:managed": "npx tsx scripts/setup-managed-agent.ts",
     "setup:boss-webhook": "npx tsx scripts/setup-boss-webhook.ts",
     "verify:hn": "npx tsx scripts/verify-hn.ts",
-    "e2e:comment-reply": "npx tsx scripts/e2e-comment-reply.ts"
+    "e2e:comment-reply": "npx tsx scripts/e2e-comment-reply.ts",
+    "qa:kesha": "npx tsx scripts/kesha-qa.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

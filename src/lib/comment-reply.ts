@@ -105,6 +105,13 @@ export interface ComposeUserMessageArgs {
   previousPostsBlock?: string;
 }
 
+// Post-processing safety net: even with explicit "no em-dash" system prompts,
+// Haiku occasionally emits "—". QA probes flagged this twice in 10 scenarios.
+// Persona doc forbids em-dash; replace with regular hyphen before sending.
+export function sanitizeCommentResponse(text: string): string {
+  return text.replace(/—/g, '-');
+}
+
 export function composeCommentUserMessage(args: ComposeUserMessageArgs): string {
   const intentInstruction = INTENT_INSTRUCTIONS[args.intent](args.userName);
 

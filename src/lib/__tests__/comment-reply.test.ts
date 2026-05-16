@@ -13,6 +13,7 @@ import {
   buildPostMetaLines,
   composeCommentUserMessage,
   parseCommentIntent,
+  sanitizeCommentResponse,
   type ReplyToMessageLike,
 } from '../comment-reply.js';
 import { callClaudeWithTools } from '../claude.js';
@@ -167,6 +168,24 @@ describe('buildPostMetaLines', () => {
     expect(lines[lines.length - 1]).toContain('https://a.com');
     expect(lines[lines.length - 1]).toContain('https://b.com');
     expect(lines[lines.length - 1]).toContain('extract_url');
+  });
+});
+
+describe('sanitizeCommentResponse', () => {
+  it('replaces em-dash with hyphen', () => {
+    expect(sanitizeCommentResponse('текст — продолжение')).toBe('текст - продолжение');
+  });
+
+  it('replaces multiple em-dashes', () => {
+    expect(sanitizeCommentResponse('A — B — C')).toBe('A - B - C');
+  });
+
+  it('does not touch hyphens or other punctuation', () => {
+    expect(sanitizeCommentResponse('hello-world, test.')).toBe('hello-world, test.');
+  });
+
+  it('handles empty string', () => {
+    expect(sanitizeCommentResponse('')).toBe('');
   });
 });
 

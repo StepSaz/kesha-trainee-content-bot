@@ -19,6 +19,7 @@ import {
   extractPostContext,
   composeCommentUserMessage,
   parseCommentIntent,
+  sanitizeCommentResponse,
 } from '../../src/lib/comment-reply.js';
 import { appendPublishedPost, loadRecentPosts } from '../../src/lib/recent-posts.js';
 import { validateNotes } from '../../src/lib/validator.js';
@@ -554,19 +555,21 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
       return;
     }
 
+    const cleanResponse = sanitizeCommentResponse(response);
+
     // Persist updated history — keep last 6 turns (12 messages) to cap token cost
     const MAX_HISTORY_TURNS = 6;
     const updatedHistory: ConversationTurn[] = ([
       ...conversationHistory,
       { role: 'user' as const, content: userMessage },
-      { role: 'assistant' as const, content: response },
+      { role: 'assistant' as const, content: cleanResponse },
     ] as ConversationTurn[]).slice(-MAX_HISTORY_TURNS * 2);
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     await store.setJSON(historyKey, updatedHistory, {
       metadata: { expiresAt: new Date(Date.now() + thirtyDaysMs).toISOString() },
     });
 
-    await sendMessage(chatId, response, { replyToMessageId: message.message_id });
+    await sendMessage(chatId, cleanResponse, { replyToMessageId: message.message_id });
   } catch (err) {
     console.error('[boss] comment reaction error:', err);
   }
