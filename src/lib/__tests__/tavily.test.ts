@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { tavilySearch } from '../tavily.js';
+import { tavilySearch, tavilyExtract } from '../tavily.js';
 
 beforeEach(() => {
   process.env.TAVILY_API_KEY = 'test-key';
@@ -97,5 +97,90 @@ describe('tavilySearch', () => {
 
     const body = JSON.parse((fetch as any).mock.calls[0][1].body);
     expect(body.max_results).toBe(5);
+  });
+});
+
+describe('tavilyExtract', () => {
+  it('returns empty string when TAVILY_API_KEY is not set', async () => {
+    delete process.env.TAVILY_API_KEY;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await tavilyExtract('https://example.com');
+
+    expect(result).toEqual('');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('posts to Tavily extract endpoint with url', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ url: 'https://example.com', raw_content: 'hello' }] }),
+    }));
+
+    await tavilyExtract('https://example.com');
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.tavily.com/extract',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: 'test-key', urls: ['https://example.com'] }),
+      })
+    );
+  });
+
+  it('returns raw_content from first result', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ url: 'https://a.com', raw_content: 'article body' }] }),
+    }));
+
+    const result = await tavilyExtract('https://a.com');
+
+    expect(result).toEqual('article body');
+  });
+
+  it('trims content to 3000 chars', async () => {
+    const longContent = 'x'.repeat(5000);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ url: 'https://a.com', raw_content: longContent }] }),
+    }));
+
+    const result = await tavilyExtract('https://a.com');
+
+    expect(result.length).toBe(3000);
+  });
+
+  it('returns empty string on non-ok response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => 'server error',
+    }));
+
+    const result = await tavilyExtract('https://a.com');
+
+    expect(result).toEqual('');
+  });
+
+  it('returns empty string on fetch throw', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')));
+
+    const result = await tavilyExtract('https://a.com');
+
+    expect(result).toEqual('');
+  });
+
+  it('returns empty string when results array is empty', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    }));
+
+    const result = await tavilyExtract('https://a.com');
+
+    expect(result).toEqual('');
   });
 });

@@ -15,6 +15,7 @@ interface PipelineConfig {
     gatherWeb: { model: string; temperature: number; max_tokens: number; tools: string[] };
     gatherLightWeb: { model: string; temperature: number; max_tokens: number; tools: string[] };
     selectTopics: { model: string; temperature: number; max_tokens: number; tools: string[] };
+    experience: { model: string; temperature: number; max_tokens: number; tools: string[] };
     generate: { model: string; temperature: number; max_tokens: number; tools: string[] };
     review: { model: string; temperature: number; max_tokens: number; tools: string[] };
     rewrite: { model: string; temperature: number; max_tokens: number; tools: string[] };
@@ -49,6 +50,14 @@ export interface ReviewNote {
 export interface ReviewResult {
   verdict: 'ok' | 'minor' | 'rework';
   notes: ReviewNote[];
+}
+
+export type ReactionType = 'studied' | 'hooked' | 'surprised' | 'connected' | 'confused' | 'personal' | 'compared';
+
+export interface TopicExperience {
+  topicTitle: string;
+  reaction: string;
+  reactionType: ReactionType;
 }
 
 export interface PipelineResult {
@@ -128,6 +137,32 @@ const reviewPostTool: ToolDef = {
       },
     },
     required: ['verdict', 'notes'],
+  },
+};
+
+const experienceTopicsTool: ToolDef = {
+  name: 'experience_topics',
+  description: 'Return personal reactions for each selected topic.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      experiences: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            topicTitle: { type: 'string', description: 'Title of the topic (must match input)' },
+            reaction: { type: 'string', description: '1-2 sentences, first person, Kesha voice' },
+            reactionType: {
+              type: 'string',
+              enum: ['studied', 'hooked', 'surprised', 'connected', 'confused', 'personal', 'compared'],
+            },
+          },
+          required: ['topicTitle', 'reaction', 'reactionType'],
+        },
+      },
+    },
+    required: ['experiences'],
   },
 };
 
@@ -221,13 +256,37 @@ SELECTION ALGORITHM - follow this sequence exactly:
   });
 }
 
+async function experienceTopics(
+  selectedTopics: SelectedTopics,
+  hnContext: string,
+  webContext: string,
+  cfg: PipelineConfig,
+): Promise<TopicExperience[]> {
+  const experiencePrompt = readConfig('kesha-experience.txt');
+  const topicList = selectedTopics.topics
+    .map((t, i) => `${i + 1}. ${t.title} (${t.sourceUrl})\n   ${t.summary}`)
+    .join('\n\n');
+
+  const result = await callClaudeStructured<{ experiences: TopicExperience[] }>({
+    systemPrompt: experiencePrompt,
+    userMessage: `Вот отобранные темы:\n\n${topicList}\n\nИсходный материал из Hacker News:\n${hnContext}\n\nИсходный материал из веб-поиска:\n${webContext}\n\nЗапиши свою реакцию на каждую тему.`,
+    model: cfg.steps.experience.model,
+    temperature: cfg.steps.experience.temperature,
+    maxTokens: cfg.steps.experience.max_tokens,
+    tool: experienceTopicsTool,
+  });
+
+  return result.experiences;
+}
+
 async function generatePost(
   hnContext: string,
   webContext: string,
   selectedTopics: SelectedTopics,
   cfg: PipelineConfig,
   previousIntros?: string[],
-  memoryEntries?: MemoryEntry[]
+  memoryEntries?: MemoryEntry[],
+  experiences?: TopicExperience[],
 ): Promise<string> {
   const persona = readConfig('kesha-persona.txt');
   const now = new Date();
@@ -243,7 +302,11 @@ async function generatePost(
   const isSparseWeek = selectedTopics.sparseWeek;
   const topicCount = selectedTopics.topics.length;
   const topicsProse = selectedTopics.topics
-    .map((t, i) => `${i + 1}. ${t.title} (${t.sourceUrl}) — ${t.summary}`)
+    .map((t, i) => {
+      const base = `${i + 1}. ${t.title} (${t.sourceUrl}) — ${t.summary}`;
+      const exp = experiences?.find(e => e.topicTitle === t.title);
+      return exp ? `${base}\n   Твоя реакция: ${exp.reaction}` : base;
+    })
     .join('\n');
 
   const sparseNote = isSparseWeek
@@ -278,9 +341,13 @@ async function generatePost(
       }`
     : '';
 
+  const experienceNote = experiences && experiences.length > 0
+    ? '\n\nВАЖНО: для каждой темы у тебя есть личная реакция ("Твоя реакция:"). Вплети её в текст секции естественно, не как отдельный абзац. Это должен быть сквозной элемент — читатель должен чувствовать что ты прожил каждую тему.'
+    : '';
+
   return callClaude({
     systemPrompt: persona,
-    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${topicsProse}${sparseNote}${topicNote}${introsBlock}${callbackBlock}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
+    userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${topicsProse}${sparseNote}${topicNote}${introsBlock}${callbackBlock}${experienceNote}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
     model: cfg.steps.generate.model,
     temperature: cfg.steps.generate.temperature,
     maxTokens: cfg.steps.generate.max_tokens,
@@ -363,9 +430,15 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
       selectedTopics.sparseWeek = false;
     }
 
+    // Step 1.5: Experience — personal reactions per topic
+    const tExp = Date.now();
+    const experiences = await experienceTopics(selectedTopics, hnContext, webContext, cfg);
+    timing.experience = Date.now() - tExp;
+    console.log(`[pipeline] experience reactions generated in ${timing.experience}ms`);
+
     // Step 2: Generate
     const t2 = Date.now();
-    const draft = await generatePost(hnContext, webContext, selectedTopics, cfg, options.previousIntros, options.memoryEntries);
+    const draft = await generatePost(hnContext, webContext, selectedTopics, cfg, options.previousIntros, options.memoryEntries, experiences);
     timing.generate = Date.now() - t2;
     console.log(`[pipeline] post generated in ${timing.generate}ms`);
 

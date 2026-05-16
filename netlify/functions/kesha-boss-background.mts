@@ -13,7 +13,14 @@ import {
 } from '../../src/lib/telegram.js';
 import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
-import { callClaude, type ConversationTurn } from '../../src/lib/claude.js';
+import { callClaude, callClaudeWithTools, type ConversationTurn } from '../../src/lib/claude.js';
+import { COMMENT_TOOLS, makeExecuteTool } from '../../src/lib/comment-tools.js';
+import {
+  extractPostContext,
+  composeCommentUserMessage,
+  parseCommentIntent,
+  sanitizeCommentResponse,
+} from '../../src/lib/comment-reply.js';
 import { appendPublishedPost, loadRecentPosts } from '../../src/lib/recent-posts.js';
 import { validateNotes } from '../../src/lib/validator.js';
 import { tavilySearch } from '../../src/lib/tavily.js';
@@ -29,6 +36,31 @@ interface TelegramChat {
   type?: 'private' | 'group' | 'supergroup' | 'channel';
 }
 
+interface TelegramPhotoSize {
+  file_id: string;
+  file_unique_id?: string;
+  width?: number;
+  height?: number;
+  file_size?: number;
+}
+
+interface TelegramEntity {
+  type: string;
+  offset: number;
+  length: number;
+  url?: string;
+}
+
+interface TelegramReplyMessage {
+  message_id: number;
+  text?: string;
+  caption?: string;
+  entities?: TelegramEntity[];
+  caption_entities?: TelegramEntity[];
+  photo?: TelegramPhotoSize[];
+  media_group_id?: string;
+}
+
 interface TelegramMessage {
   message_id: number;
   from: TelegramUser;
@@ -36,7 +68,7 @@ interface TelegramMessage {
   text?: string;
   caption?: string;
   document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
-  reply_to_message?: { message_id: number; text?: string };
+  reply_to_message?: TelegramReplyMessage;
   message_thread_id?: number;
 }
 
@@ -362,16 +394,6 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
     `✅ Отправлено в канал: t.me/psyreq/${sendResult.messageId}`, { replyMarkup: null });
 }
 
-type CommentIntent = 'expand' | 'explain' | 'compare' | 'freeform';
-
-function parseCommentIntent(text: string): CommentIntent {
-  const t = text.toLowerCase();
-  if (/расширь|подробнее|больше/.test(t)) return 'expand';
-  if (/объясни|что значит|что такое/.test(t)) return 'explain';
-  if (/сравни|vs\b|versus/.test(t)) return 'compare';
-  return 'freeform';
-}
-
 async function handleCommentReply(message: TelegramMessage): Promise<void> {
   if (!message.text) return;
 
@@ -464,14 +486,7 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   }
 
   const intent = parseCommentIntent(message.text);
-  const postText = message.reply_to_message?.text ?? '[текст поста недоступен]';
-
-  const intentInstructions: Record<CommentIntent, string> = {
-    expand: `${userName} просит развернуть тему подробнее. Напиши 2-3 абзаца, углубись в детали.`,
-    explain: `${userName} просит объяснить проще. Объясни как для умного нетехнического человека.`,
-    compare: `${userName} просит сравнение. Сравни кратко — что лучше, хуже, в каком контексте.`,
-    freeform: `${userName} написал комментарий к посту. Ответь по делу, в своём стиле стажёра.`,
-  };
+  const postContext = extractPostContext(message.reply_to_message);
 
   // Load per-user conversation history for this thread
   const historyKey = `comment-history:${chatId}:${threadId}:user:${message.from.id}`;
@@ -482,7 +497,7 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   let previousPostsBlock = '';
   if (conversationHistory.length === 0) {
     const recentPosts = await loadRecentPosts();
-    const currentPrefix = postText.slice(0, 80);
+    const currentPrefix = postContext.postText.slice(0, 80);
     const previous = recentPosts
       .filter(p => !currentPrefix || p.text.slice(0, 80) !== currentPrefix)
       .slice(-2);
@@ -495,9 +510,14 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   }
 
   // Include post context only in the first message; history carries it for subsequent turns
-  const userMessage = conversationHistory.length === 0
-    ? `Контекст текущего поста:\n${postText}${previousPostsBlock}\n\nКомментарий ${userName}: "${message.text}"\n\n${intentInstructions[intent]}`
-    : `${userName}: "${message.text}"\n\n${intentInstructions[intent]}`;
+  const userMessage = composeCommentUserMessage({
+    isFirstTurn: conversationHistory.length === 0,
+    postContext,
+    userName,
+    commentText: message.text,
+    intent,
+    previousPostsBlock,
+  });
 
   const systemPrompt = [
     'Ты Иннокентий ("Кеша") - бот-стажёр Telegram-канала "Временно Степан" (@psyreq).',
@@ -513,15 +533,20 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
     'В комментариях канала остаёшься в теме поста - не общий чат-бот.',
     'Пишешь живо, по-русски, со стажёрской самоиронией, без официоза. Никаких em-dash (—), никакого markdown. Лаконично - не больше 3-4 предложений.',
     'Если спросят кто ты, что умеешь или как устроен - ответь честно и коротко, в своём стиле.',
+    'У тебя есть инструменты view_image (посмотреть прикреплённую картинку) и extract_url (открыть ссылку из поста). Используй их только если содержимое реально нужно для ответа — не злоупотребляй.',
   ].join(' ');
 
   try {
-    const response = await callClaude({
+    const executeTool = makeExecuteTool({ photoFileId: postContext.photoFileId });
+    const response = await callClaudeWithTools({
       systemPrompt,
       userMessage,
       model: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       maxTokens: 300,
+      tools: COMMENT_TOOLS,
+      executeTool,
+      maxIterations: 3,
       conversationHistory,
     });
 
@@ -530,19 +555,21 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
       return;
     }
 
+    const cleanResponse = sanitizeCommentResponse(response);
+
     // Persist updated history — keep last 6 turns (12 messages) to cap token cost
     const MAX_HISTORY_TURNS = 6;
     const updatedHistory: ConversationTurn[] = ([
       ...conversationHistory,
       { role: 'user' as const, content: userMessage },
-      { role: 'assistant' as const, content: response },
+      { role: 'assistant' as const, content: cleanResponse },
     ] as ConversationTurn[]).slice(-MAX_HISTORY_TURNS * 2);
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     await store.setJSON(historyKey, updatedHistory, {
       metadata: { expiresAt: new Date(Date.now() + thirtyDaysMs).toISOString() },
     });
 
-    await sendMessage(chatId, response, { replyToMessageId: message.message_id });
+    await sendMessage(chatId, cleanResponse, { replyToMessageId: message.message_id });
   } catch (err) {
     console.error('[boss] comment reaction error:', err);
   }
