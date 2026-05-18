@@ -25,3 +25,11 @@
 - **Limits:** 3 tool-loop iterations max per comment, 1 `view_image` call per loop, Tavily extract trimmed to 3000 chars.
 - **Evaluation gate (2026-06-15):** review logs for (1) tool-call utility ratio — did the call actually inform the answer; (2) reader/boss feedback — quality up or down. If neither shows improvement, revert to deterministic prefetch (Option B in the design doc).
 - **Design doc:** [docs/superpowers/specs/2026-05-15-kesha-post-context-design.md](docs/superpowers/specs/2026-05-15-kesha-post-context-design.md)
+
+### Advisor pattern in comment replies (started 2026-05-18)
+
+- **What:** Haiku-driven `handleCommentReply` gets a third tool `consult_advisor({ question, draft_answer? })` that calls Sonnet (`claude-sonnet-4-6`) for a short opinion on hard cases (sarcasm, ambiguous tone, facts beyond the post). The base model stays Haiku; the advisor only fires when Haiku decides it's stuck. Inspired by the Anthropic advisor strategy blog post.
+- **Code entry points:** `consult_advisor` in [src/lib/comment-tools.ts](src/lib/comment-tools.ts) (search for `// EXPERIMENT (2026-05-18)`), system-prompt update in `handleCommentReply` in [netlify/functions/kesha-boss-background.mts](netlify/functions/kesha-boss-background.mts).
+- **Limits:** max 1 advisor call per comment session, advisor `max_tokens=400`, advisor returns advice (1-3 sentences), not the final reply — Haiku still writes the user-facing text in its own voice.
+- **Why only comments, not review/generate:** advisor pattern wins when the base model handles most cases and only sometimes needs help. The pipeline `review`/`generate` steps already always need Sonnet — escalating from Haiku there would just mean ~80% advisor calls + double round-trip.
+- **Evaluation gate (2026-06-15, joint with the tool-use experiment):** in logs check (1) advisor call rate per comment, (2) qualitative win when fired — did the advice change the answer in a useful way, (3) cost delta vs flat-Haiku baseline. If advisor fires rarely AND doesn't improve answers, drop the tool.

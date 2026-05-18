@@ -1,16 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeExecuteTool, COMMENT_TOOLS } from '../comment-tools.js';
 
+vi.mock('../claude.js', async () => {
+  const actual = await vi.importActual<typeof import('../claude.js')>('../claude.js');
+  return { ...actual, callClaude: vi.fn() };
+});
+const { callClaude } = await import('../claude.js');
+
 beforeEach(() => {
   process.env.TAVILY_API_KEY = 'test-key';
   process.env.TELEGRAM_BOT_TOKEN = 'test-token';
   vi.unstubAllGlobals();
+  vi.mocked(callClaude).mockReset();
 });
 
 describe('COMMENT_TOOLS schema', () => {
-  it('declares extract_url and view_image', () => {
+  it('declares extract_url, view_image, consult_advisor', () => {
     const names = COMMENT_TOOLS.map(t => t.name).sort();
-    expect(names).toEqual(['extract_url', 'view_image']);
+    expect(names).toEqual(['consult_advisor', 'extract_url', 'view_image']);
   });
 
   it('extract_url requires url string', () => {
@@ -139,6 +146,51 @@ describe('makeExecuteTool: view_image', () => {
     const result = await exec('view_image', {});
 
     expect(result).toBe('не смог скачать картинку');
+  });
+});
+
+describe('makeExecuteTool: consult_advisor', () => {
+  it('rejects empty question', async () => {
+    const exec = makeExecuteTool({});
+    const result = await exec('consult_advisor', { question: '   ' });
+    expect(result).toBe('нужен непустой question');
+    expect(callClaude).not.toHaveBeenCalled();
+  });
+
+  it('returns advice from Sonnet on first call', async () => {
+    vi.mocked(callClaude).mockResolvedValue('  не отвечай сарказмом, он спрашивает серьёзно  ');
+    const exec = makeExecuteTool({});
+
+    const result = await exec('consult_advisor', {
+      question: 'это сарказм или нет?',
+      draft_answer: 'спасибо за фидбек',
+    });
+
+    expect(result).toBe('не отвечай сарказмом, он спрашивает серьёзно');
+    expect(callClaude).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(callClaude).mock.calls[0][0];
+    expect(args.model).toBe('claude-sonnet-4-6');
+    expect(args.userMessage).toContain('это сарказм или нет?');
+    expect(args.userMessage).toContain('спасибо за фидбек');
+  });
+
+  it('caps at one call per session', async () => {
+    vi.mocked(callClaude).mockResolvedValue('первый совет');
+    const exec = makeExecuteTool({});
+
+    await exec('consult_advisor', { question: 'q1' });
+    const second = await exec('consult_advisor', { question: 'q2' });
+
+    expect(second).toBe('уже спрашивал напарника в этом разговоре, справляйся сам');
+    expect(callClaude).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns graceful fallback on advisor error', async () => {
+    vi.mocked(callClaude).mockRejectedValue(new Error('boom'));
+    const exec = makeExecuteTool({});
+
+    const result = await exec('consult_advisor', { question: 'help' });
+    expect(result).toBe('напарник недоступен, отвечай сам');
   });
 });
 
