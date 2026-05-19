@@ -1,5 +1,10 @@
 # Kesha Bot — Project Instructions
 
+## Workflow
+- Владелец (@st_szs) — не разработчик и PR не ревьюит. Делай саморевью перед пушем, не жди апрува
+- После пуша сразу мерджи PR в `main` (squash merge), чтобы фикс попал на прод. Не оставляй PR висеть в draft
+- Если есть сомнения в корректности — спроси у владельца до пуша, а не после
+
 ## Project Conventions
 - Cron schedule is weekly (every Thursday 16:00 Warsaw / 14:00 UTC) — news window is last 7 days
 - Any additional triggers (ad-hoc runs, tests) should use the manual HTTP trigger endpoint, not the cron
