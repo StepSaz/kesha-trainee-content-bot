@@ -822,7 +822,16 @@ export default async (req: Request): Promise<Response> => {
     }
   } else if (msg && (msg.message_thread_id || msg.reply_to_message)) {
     const botId = getBotUserId();
-    const mentionsKesha = /кеша/i.test(msg.text ?? '');
+    // Vocative-only match: trigger when "Кеша" is being addressed, not merely mentioned.
+    //   ✓ "Кеша, спишь?" / "Кеша!" / "Кеша расскажи"  (at start of line)
+    //   ✓ "Эй Кеша!" / "Эй, Кеша, привет"             (followed by ,!?:)
+    //   ✓ "Привет, Кеша"                              (at end of message)
+    //   ✓ "Привет. Кеша расскажи"                     (after sentence end)
+    //   ✗ "хорошо хоть Кеша всегда поддержит"         (subject mid-sentence, no addressing punct)
+    //   ✗ "Я люблю Кешу" / "передай Кеше"             (declensions Кешу/Кеше/Кешей — pattern is literal "кеша")
+    // \p{L} lookaheads enforce Cyrillic-aware word boundary (\b doesn't work for Cyrillic in JS).
+    const KESHA_ADDRESS = /(?:^|\n|[.!?]\s+)\s*кеша(?![\p{L}])|кеша(?=[,!?:])|кеша(?![\p{L}])\s*$/iu;
+    const mentionsKesha = KESHA_ADDRESS.test(msg.text ?? '');
     const isReplyToBot = botId !== null && msg.reply_to_message?.from?.id === botId;
     if (mentionsKesha || isReplyToBot) {
       await handleCommentReply(msg);
