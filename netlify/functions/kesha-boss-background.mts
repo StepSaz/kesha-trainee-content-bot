@@ -53,6 +53,7 @@ interface TelegramEntity {
 
 interface TelegramReplyMessage {
   message_id: number;
+  from?: TelegramUser;
   text?: string;
   caption?: string;
   entities?: TelegramEntity[];
@@ -711,6 +712,14 @@ async function handleNotes(message: TelegramMessage): Promise<void> {
   }
 }
 
+// Bot's numeric user id is the prefix of the bot token (`<id>:<secret>`).
+function getBotUserId(): number | null {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return null;
+  const id = Number.parseInt(token.split(':')[0], 10);
+  return Number.isFinite(id) ? id : null;
+}
+
 function shouldSkipSearch(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < 8) return true;
@@ -811,8 +820,13 @@ export default async (req: Request): Promise<Response> => {
     if (cfg.allowed_user_ids.includes(msg.from.id)) {
       await handleDmChat(msg);
     }
-  } else if (msg && (msg.message_thread_id || msg.reply_to_message) && /кеша/i.test(msg.text ?? '')) {
-    await handleCommentReply(msg);
+  } else if (msg && (msg.message_thread_id || msg.reply_to_message)) {
+    const botId = getBotUserId();
+    const mentionsKesha = /кеша/i.test(msg.text ?? '');
+    const isReplyToBot = botId !== null && msg.reply_to_message?.from?.id === botId;
+    if (mentionsKesha || isReplyToBot) {
+      await handleCommentReply(msg);
+    }
   }
 
   return new Response(null, { status: 202 });
