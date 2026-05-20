@@ -82,6 +82,24 @@ function extractText(response: Anthropic.Message): string {
     .join('');
 }
 
+// When server-side tools (e.g. web_search) are used, Claude often emits a
+// short "thinking out loud" text block before the tool call ("копаю минуту…").
+// For end-user replies we only want the final answer — text that comes after
+// the last server_tool_use block.
+function extractFinalText(response: Anthropic.Message): string {
+  const blocks = response.content as unknown as { type: string; text?: string }[];
+  let lastServerToolIdx = -1;
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].type === 'server_tool_use') lastServerToolIdx = i;
+  }
+  if (lastServerToolIdx === -1) return extractText(response);
+  return blocks
+    .slice(lastServerToolIdx + 1)
+    .filter(b => b.type === 'text' && typeof b.text === 'string')
+    .map(b => b.text as string)
+    .join('');
+}
+
 // EXPERIMENT (2026-05-15): tool-use comment replies — see CLAUDE.md
 // Agentic loop: model decides when to call view_image / extract_url.
 // Note: conversationHistory carries only plain-text turns (final user/assistant).
@@ -117,7 +135,7 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
     }
 
     if (response.stop_reason !== 'tool_use') {
-      return extractText(response);
+      return extractFinalText(response);
     }
 
     messages.push({ role: 'assistant', content: response.content });
@@ -154,7 +172,7 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
     temperature: params.temperature,
     max_tokens: params.maxTokens,
   } as any);
-  const text = extractText(final);
+  const text = extractFinalText(final);
   // Defensive fallback: if the model still emitted only tool_use (no text) on the no-tools call,
   // we'd otherwise drop the reply silently. Better to say something honest.
   return text || 'что-то я завис на этом вопросе, попробуй переформулировать 🐤';
