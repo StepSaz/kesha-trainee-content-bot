@@ -64,6 +64,7 @@ export function makeExecuteTool(
   let advisorCalled = false;
 
   return async (name, input) => {
+
     if (name === 'consult_advisor') {
       if (advisorCalled) return 'уже спрашивал напарника в этом разговоре, справляйся сам';
       const question = typeof input.question === 'string' ? input.question.trim() : '';
