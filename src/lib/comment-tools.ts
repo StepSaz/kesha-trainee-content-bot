@@ -4,14 +4,23 @@ import { callClaude, type ToolDef, type ToolResult } from './claude.js';
 import { tavilyExtract, tavilySearch, type TavilySearchDepth } from './tavily.js';
 import { getFileAsBase64 } from './telegram.js';
 
-// Tavily search settings for comment replies.
-// 'advanced' uses 2 Tavily credits per call (vs 1 for 'basic') but returns
-// noticeably richer snippets — worth it for a 2-call/conv budget where each
-// reply replaces a hallucination risk.
+// Tavily search settings for comment replies. Tuned per Tavily's
+// best-practices doc (tavily-ai/skills/skills/tavily-best-practices):
+// - 'advanced' depth → chunks-style results, highest relevance (2 credits/call)
+// - topic='news'    → time-sensitive AI/tech announcements ranked higher
+// - timeRange='week'→ trims old noise when reader asks about recent stuff
+// - chunksPerSource=5 → max content per source at advanced depth
+// - minScore=0.4    → drops obvious off-topic hits
+// - excludeDomains  → strips low-signal forums (reddit/quora) by default
 const SEARCH_DEPTH: TavilySearchDepth = 'advanced';
-const SEARCH_RESULTS = 4;
+const SEARCH_RESULTS = 5;
 const SEARCH_SNIPPET_CHARS = 500;
 const SEARCH_LIMIT_PER_CONVERSATION = 2;
+const SEARCH_TOPIC = 'news' as const;
+const SEARCH_TIME_RANGE = 'week' as const;
+const SEARCH_CHUNKS_PER_SOURCE = 5;
+const SEARCH_MIN_SCORE = 0.4;
+const SEARCH_EXCLUDE_DOMAINS = ['reddit.com', 'quora.com'];
 
 const ADVISOR_MODEL = 'claude-sonnet-4-6';
 const ADVISOR_MAX_TOKENS = 400;
@@ -43,7 +52,7 @@ export const COMMENT_TOOLS: ToolDef[] = [
   {
     name: 'web_search',
     description:
-      'Поиск свежей информации в вебе (Tavily, advanced depth). Зови когда читатель просит копнуть глубже, расскажи подробнее / спрашивает конкретные цифры, цены, бенчмарки, даты / задаёт вопрос про события свежее твоих знаний. На "спасибо/что думаешь" не зови. Возвращает топ-4 результата (title + url + сниппет). Максимум 2 вызова за разговор. Иди в поиск сразу, не предлагай «могу поискать».',
+      'Поиск свежей информации в вебе (Tavily, advanced depth, topic=news, time=last 7 days, без reddit/quora). Зови когда читатель просит копнуть глубже, расскажи подробнее / спрашивает конкретные цифры, цены, бенчмарки, даты / задаёт вопрос про события свежее твоих знаний. На "спасибо/что думаешь" не зови. Возвращает топ-5 результатов (title + url + сниппет). Максимум 2 вызова за разговор. Иди в поиск сразу, не предлагай «могу поискать». Запрос делай коротко (под 400 символов), лучше на английском для tech-новостей.',
     input_schema: {
       type: 'object',
       properties: {
@@ -97,7 +106,15 @@ export function makeExecuteTool(
       if (!query) return 'нужен непустой query';
       searchCalls += 1;
 
-      const results = await tavilySearch(query, { maxResults: SEARCH_RESULTS, depth: SEARCH_DEPTH });
+      const results = await tavilySearch(query, {
+        maxResults: SEARCH_RESULTS,
+        depth: SEARCH_DEPTH,
+        topic: SEARCH_TOPIC,
+        timeRange: SEARCH_TIME_RANGE,
+        chunksPerSource: SEARCH_CHUNKS_PER_SOURCE,
+        minScore: SEARCH_MIN_SCORE,
+        excludeDomains: SEARCH_EXCLUDE_DOMAINS,
+      });
       if (results.length === 0) return 'поиск ничего не вернул';
       return results
         .map((r, i) => `[${i + 1}] ${r.title}\n    URL: ${r.url}\n    ${r.content.slice(0, SEARCH_SNIPPET_CHARS)}`)

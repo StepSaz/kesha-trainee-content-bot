@@ -217,7 +217,7 @@ describe('makeExecuteTool: web_search', () => {
     expect(result as string).toContain('https://blog.google/a');
   });
 
-  it('uses advanced depth and limits to 4 results in the request payload', async () => {
+  it('uses advanced depth, news topic, weekly time range, top-5 results, and excludes low-signal forums', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ results: [] }),
@@ -229,7 +229,11 @@ describe('makeExecuteTool: web_search', () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.search_depth).toBe('advanced');
-    expect(body.max_results).toBe(4);
+    expect(body.max_results).toBe(5);
+    expect(body.topic).toBe('news');
+    expect(body.time_range).toBe('week');
+    expect(body.chunks_per_source).toBe(5);
+    expect(body.exclude_domains).toEqual(['reddit.com', 'quora.com']);
   });
 
   it('reports empty result set', async () => {
