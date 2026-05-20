@@ -110,11 +110,12 @@ export interface ComposeUserMessageArgs {
 // Post-processing safety net: even with explicit "no em-dash" system prompts,
 // Haiku occasionally emits "—". QA probes flagged this twice in 10 scenarios.
 // Persona doc forbids em-dash; replace with regular hyphen before sending.
-// Also strips the recurring "Bosque," opener — a Haiku artifact that appears
-// when the model tries to greet the reader as "Босс" and tokenizes weirdly.
+// Also strips the "Bosque," typo-artifact (a Haiku tokenization glitch when
+// trying to write "Босс"). Legitimate "Босс/Шеф/Boss" greetings are kept —
+// addressing the boss as "Босс" is on-brand.
 export function sanitizeCommentResponse(text: string): string {
   return text
-    .replace(/^\s*(bosque|босс|шеф|boss)[\s,.:!]+/i, '')
+    .replace(/^\s*bosque[\s,.:!]+/i, '')
     .replace(/—/g, '-')
     .trim();
 }

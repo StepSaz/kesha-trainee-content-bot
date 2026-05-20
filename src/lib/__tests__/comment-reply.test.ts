@@ -192,8 +192,8 @@ describe('sanitizeCommentResponse', () => {
     expect(sanitizeCommentResponse('Bosque, на I/O Google показала...')).toBe('на I/O Google показала...');
   });
 
-  it('strips leading "Босс," greeting', () => {
-    expect(sanitizeCommentResponse('Босс, вот что нашёл.')).toBe('вот что нашёл.');
+  it('keeps legitimate "Босс" greeting (on-brand)', () => {
+    expect(sanitizeCommentResponse('Босс, вот что нашёл.')).toBe('Босс, вот что нашёл.');
   });
 
   it('does not strip "Босс" mid-sentence', () => {
