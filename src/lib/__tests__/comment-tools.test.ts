@@ -15,9 +15,9 @@ beforeEach(() => {
 });
 
 describe('COMMENT_TOOLS schema', () => {
-  it('declares extract_url, view_image, consult_advisor', () => {
+  it('declares extract_url, view_image, web_search, consult_advisor', () => {
     const names = COMMENT_TOOLS.map(t => t.name).sort();
-    expect(names).toEqual(['consult_advisor', 'extract_url', 'view_image']);
+    expect(names).toEqual(['consult_advisor', 'extract_url', 'view_image', 'web_search']);
   });
 
   it('extract_url requires url string', () => {
@@ -191,6 +191,72 @@ describe('makeExecuteTool: consult_advisor', () => {
 
     const result = await exec('consult_advisor', { question: 'help' });
     expect(result).toBe('напарник недоступен, отвечай сам');
+  });
+});
+
+describe('makeExecuteTool: web_search', () => {
+  it('rejects empty query', async () => {
+    const exec = makeExecuteTool({});
+    const result = await exec('web_search', { query: '   ' });
+    expect(result).toBe('нужен непустой query');
+  });
+
+  it('returns formatted Tavily results', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [
+        { title: 'Gemini 3.5 launch', url: 'https://blog.google/a', content: 'Google announced Gemini 3.5 at I/O.', score: 0.9 },
+      ] }),
+    }));
+
+    const exec = makeExecuteTool({});
+    const result = await exec('web_search', { query: 'google io 2026' });
+
+    expect(typeof result).toBe('string');
+    expect(result as string).toContain('Gemini 3.5 launch');
+    expect(result as string).toContain('https://blog.google/a');
+  });
+
+  it('uses advanced depth and limits to 4 results in the request payload', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const exec = makeExecuteTool({});
+    await exec('web_search', { query: 'gemini' });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.search_depth).toBe('advanced');
+    expect(body.max_results).toBe(4);
+  });
+
+  it('reports empty result set', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    }));
+
+    const exec = makeExecuteTool({});
+    const result = await exec('web_search', { query: 'нечего нет' });
+    expect(result).toBe('поиск ничего не вернул');
+  });
+
+  it('caps at 2 calls per session', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ title: 't', url: 'https://x', content: 'c', score: 0.5 }] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const exec = makeExecuteTool({});
+    await exec('web_search', { query: 'q1' });
+    await exec('web_search', { query: 'q2' });
+    const third = await exec('web_search', { query: 'q3' });
+
+    expect(third).toBe('лимит поисков исчерпан (2 на разговор), отвечай тем, что есть');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

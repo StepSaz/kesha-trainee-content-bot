@@ -5,7 +5,24 @@ export interface TavilyResult {
   score: number;
 }
 
-export async function tavilySearch(query: string, maxResults = 5): Promise<TavilyResult[]> {
+export type TavilySearchDepth = 'basic' | 'advanced';
+
+export interface TavilySearchOptions {
+  maxResults?: number;
+  depth?: TavilySearchDepth;
+}
+
+export async function tavilySearch(
+  query: string,
+  optionsOrMaxResults: number | TavilySearchOptions = 5,
+): Promise<TavilyResult[]> {
+  const opts: TavilySearchOptions =
+    typeof optionsOrMaxResults === 'number'
+      ? { maxResults: optionsOrMaxResults }
+      : optionsOrMaxResults;
+  const maxResults = opts.maxResults ?? 5;
+  const depth: TavilySearchDepth = opts.depth ?? 'basic';
+
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) {
     console.warn('[tavily] TAVILY_API_KEY not set — skipping search');
@@ -19,7 +36,7 @@ export async function tavilySearch(query: string, maxResults = 5): Promise<Tavil
       body: JSON.stringify({
         api_key: apiKey,
         query,
-        search_depth: 'basic',
+        search_depth: depth,
         max_results: maxResults,
       }),
     });
@@ -31,7 +48,7 @@ export async function tavilySearch(query: string, maxResults = 5): Promise<Tavil
 
     const data = await res.json() as { results?: TavilyResult[] };
     const results = data.results ?? [];
-    console.log(`[tavily] query="${query}" results=${results.length}`);
+    console.log(`[tavily] query="${query}" depth=${depth} results=${results.length}`);
     return results;
   } catch (err) {
     console.error('[tavily] search error:', err);

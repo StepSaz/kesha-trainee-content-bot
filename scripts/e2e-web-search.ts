@@ -1,16 +1,16 @@
 /**
- * E2E smoke test for the (server-side) web_search tool in comment replies.
+ * E2E smoke test for the (Tavily-backed) web_search tool in comment replies.
  *
- * Goal: check that Haiku calls Anthropic's native web_search when the
- * reader explicitly pushes for deeper coverage ("копни глубже", "дай
- * подробнее") or asks about facts clearly beyond the post — and leaves
- * simple cases alone.
+ * Goal: check that Haiku calls web_search when the reader explicitly
+ * pushes for deeper coverage ("копни глубже", "расскажи подробнее") or
+ * asks about facts clearly beyond the post — and leaves simple cases
+ * alone. web_search is now client-side (Tavily, advanced depth).
  *
  * Mirrors the production system prompt from handleCommentReply
  * (netlify/functions/kesha-boss-background.mts) — keep in sync if prod
  * changes.
  *
- * Required env: ANTHROPIC_API_KEY
+ * Required env: ANTHROPIC_API_KEY, TAVILY_API_KEY
  *
  *   npx tsx scripts/e2e-web-search.ts
  */
@@ -27,9 +27,8 @@ const SYSTEM_PROMPT = [
   'Ты Иннокентий ("Кеша"), бот-стажёр Telegram-канала "Временно Степан" (@psyreq). Канал про AI, tech, vibe coding и инструменты для IT. В комментариях помогаешь читателям по теме поста.',
   'ГЛАВНОЕ: отвечай по существу задачи читателя - какие конкретные инструменты, подходы, продукты подойдут под ЕГО сценарий. Не отвечай абстрактно про категории технологий.',
   'АНТИ-ПОПУГАЙ: читатель уже прочитал пост, не пересказывай его другими словами. Если просят «подробнее/что ещё/расскажи больше» — иди в web_search за фактами, которых в посте нет. Если по факту добавить нечего и поиск не помог — честно скажи об этом коротко.',
-  'НЕ обращайся к читателю по типу «Босс/Шеф/Bosque/Boss» — пиши без вступительного обращения, начинай сразу с сути.',
-  'Стиль: живо, по-русски, со стажёрской самоиронией. КРАТКОСТЬ обязательна: финальный ответ строго 2-4 предложения, ОДНИМ абзацем без переносов строк, без вступлений «сейчас расскажу/копаю/дай минуту», без послесловий «вывод/итог». Без markdown, без em-dash.',
-  'Инструменты: view_image (картинка поста), extract_url (ссылка из поста), web_search (нативный поиск в вебе), consult_advisor (старший напарник для трудных случаев: сарказм, неясности, тон).',
+  'Стиль: живо, по-русски, со стажёрской самоиронией. К боссу можно обращаться «Босс» — это on-brand. КРАТКОСТЬ обязательна: финальный ответ строго 2-4 предложения, ОДНИМ абзацем без переносов строк, без вступлений «сейчас расскажу/копаю/дай минуту», без послесловий «вывод/итог». Без markdown, без em-dash.',
+  'Инструменты: view_image (картинка поста), extract_url (ссылка из поста), web_search (Tavily, advanced depth, топ-4 результата), consult_advisor (старший напарник для трудных случаев: сарказм, неясности, тон).',
   'Когда звать web_search: читатель просит копнуть глубже / спрашивает конкретные цифры, цены, бенчмарки, даты, сравнения продуктов / задаёт вопрос про события свежее твоих знаний. В этих случаях иди и ищи сразу, не спрашивай разрешения и не предлагай "могу поискать" — просто делай. Макс 2 запроса за разговор. НЕ зови на "спасибо/класс/что думаешь" и когда факт уже есть в посте.',
   'После web_search: НЕ пересказывай результаты целиком, бери 1-2 ключевых факта + при необходимости 1 ссылку. Ответ всё равно 2-4 предложения одним абзацем.',
   'Advisor - максимум один раз за разговор, на простое "спасибо" не зови; даёт совет, финальный ответ всё равно пишешь ты.',
@@ -90,8 +89,11 @@ const SCENARIOS: Scenario[] = [
 ];
 
 function checkEnv(): void {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error('Missing env: ANTHROPIC_API_KEY');
+  const missing: string[] = [];
+  if (!process.env.ANTHROPIC_API_KEY) missing.push('ANTHROPIC_API_KEY');
+  if (!process.env.TAVILY_API_KEY) missing.push('TAVILY_API_KEY');
+  if (missing.length > 0) {
+    console.error(`Missing env: ${missing.join(', ')}`);
     process.exit(1);
   }
 }
@@ -129,7 +131,6 @@ async function runScenario(s: Scenario): Promise<void> {
       temperature: 0.7,
       maxTokens: 600,
       tools: COMMENT_TOOLS,
-      serverTools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
       executeTool: real,
       maxIterations: 3,
       onToolUse: (name, input, source) => {

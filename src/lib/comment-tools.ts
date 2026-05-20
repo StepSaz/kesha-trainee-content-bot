@@ -1,8 +1,17 @@
 // EXPERIMENT (2026-05-15): tool-use comment replies — see CLAUDE.md
 // EXPERIMENT (2026-05-18): advisor pattern — consult_advisor escalates to Sonnet.
 import { callClaude, type ToolDef, type ToolResult } from './claude.js';
-import { tavilyExtract } from './tavily.js';
+import { tavilyExtract, tavilySearch, type TavilySearchDepth } from './tavily.js';
 import { getFileAsBase64 } from './telegram.js';
+
+// Tavily search settings for comment replies.
+// 'advanced' uses 2 Tavily credits per call (vs 1 for 'basic') but returns
+// noticeably richer snippets — worth it for a 2-call/conv budget where each
+// reply replaces a hallucination risk.
+const SEARCH_DEPTH: TavilySearchDepth = 'advanced';
+const SEARCH_RESULTS = 4;
+const SEARCH_SNIPPET_CHARS = 500;
+const SEARCH_LIMIT_PER_CONVERSATION = 2;
 
 const ADVISOR_MODEL = 'claude-sonnet-4-6';
 const ADVISOR_MAX_TOKENS = 400;
@@ -29,6 +38,21 @@ export const COMMENT_TOOLS: ToolDef[] = [
     input_schema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'web_search',
+    description:
+      'Поиск свежей информации в вебе (Tavily, advanced depth). Зови когда читатель просит копнуть глубже, расскажи подробнее / спрашивает конкретные цифры, цены, бенчмарки, даты / задаёт вопрос про события свежее твоих знаний. На "спасибо/что думаешь" не зови. Возвращает топ-4 результата (title + url + сниппет). Максимум 2 вызова за разговор. Иди в поиск сразу, не предлагай «могу поискать».',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Поисковый запрос на том языке, на котором ожидаются источники (для tech-новостей обычно en).',
+        },
+      },
+      required: ['query'],
     },
   },
   {
@@ -62,8 +86,23 @@ export function makeExecuteTool(
   const urlCache = new Map<string, string>();
   let imageLoaded = false;
   let advisorCalled = false;
+  let searchCalls = 0;
 
   return async (name, input) => {
+    if (name === 'web_search') {
+      if (searchCalls >= SEARCH_LIMIT_PER_CONVERSATION) {
+        return `лимит поисков исчерпан (${SEARCH_LIMIT_PER_CONVERSATION} на разговор), отвечай тем, что есть`;
+      }
+      const query = typeof input.query === 'string' ? input.query.trim() : '';
+      if (!query) return 'нужен непустой query';
+      searchCalls += 1;
+
+      const results = await tavilySearch(query, { maxResults: SEARCH_RESULTS, depth: SEARCH_DEPTH });
+      if (results.length === 0) return 'поиск ничего не вернул';
+      return results
+        .map((r, i) => `[${i + 1}] ${r.title}\n    URL: ${r.url}\n    ${r.content.slice(0, SEARCH_SNIPPET_CHARS)}`)
+        .join('\n\n');
+    }
 
     if (name === 'consult_advisor') {
       if (advisorCalled) return 'уже спрашивал напарника в этом разговоре, справляйся сам';
