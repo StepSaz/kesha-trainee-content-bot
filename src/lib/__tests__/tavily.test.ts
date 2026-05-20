@@ -87,6 +87,75 @@ describe('tavilySearch', () => {
     expect(results).toEqual([]);
   });
 
+  it('passes news topic, time_range, chunks_per_source, domains, and depth via options object', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await tavilySearch('gemini 3.5 io', {
+      maxResults: 5,
+      depth: 'advanced',
+      topic: 'news',
+      timeRange: 'week',
+      chunksPerSource: 5,
+      excludeDomains: ['reddit.com'],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body).toMatchObject({
+      query: 'gemini 3.5 io',
+      search_depth: 'advanced',
+      max_results: 5,
+      topic: 'news',
+      time_range: 'week',
+      chunks_per_source: 5,
+      exclude_domains: ['reddit.com'],
+    });
+  });
+
+  it('skips chunks_per_source on basic depth', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await tavilySearch('q', { depth: 'basic', chunksPerSource: 5 });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.chunks_per_source).toBeUndefined();
+  });
+
+  it('post-filters results below minScore', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [
+        { title: 'good', url: 'https://a', content: 'x', score: 0.8 },
+        { title: 'meh', url: 'https://b', content: 'y', score: 0.3 },
+        { title: 'edge', url: 'https://c', content: 'z', score: 0.4 },
+      ] }),
+    }));
+
+    const results = await tavilySearch('q', { minScore: 0.4 });
+    expect(results.map(r => r.title)).toEqual(['good', 'edge']);
+  });
+
+  it('truncates queries over 400 chars', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const long = 'x'.repeat(500);
+    await tavilySearch(long);
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect((body.query as string).length).toBe(400);
+  });
+
   it('uses default max_results of 5', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
