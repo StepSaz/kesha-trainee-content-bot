@@ -187,6 +187,18 @@ describe('sanitizeCommentResponse', () => {
   it('handles empty string', () => {
     expect(sanitizeCommentResponse('')).toBe('');
   });
+
+  it('strips leading "Bosque," artifact', () => {
+    expect(sanitizeCommentResponse('Bosque, на I/O Google показала...')).toBe('на I/O Google показала...');
+  });
+
+  it('strips leading "Босс," greeting', () => {
+    expect(sanitizeCommentResponse('Босс, вот что нашёл.')).toBe('вот что нашёл.');
+  });
+
+  it('does not strip "Босс" mid-sentence', () => {
+    expect(sanitizeCommentResponse('по Codex - Босс уже спрашивал.')).toBe('по Codex - Босс уже спрашивал.');
+  });
 });
 
 describe('composeCommentUserMessage', () => {

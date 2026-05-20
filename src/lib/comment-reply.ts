@@ -90,9 +90,11 @@ export function buildPostMetaLines(ctx: PostContext): string[] {
 }
 
 export const INTENT_INSTRUCTIONS: Record<CommentIntent, (userName: string) => string> = {
-  expand: u => `${u} просит развернуть тему подробнее. Напиши 2-3 абзаца, углубись в детали.`,
-  explain: u => `${u} просит объяснить проще. Объясни как для умного нетехнического человека.`,
-  compare: u => `${u} просит сравнение. Сравни кратко — что лучше, хуже, в каком контексте.`,
+  // "Подробнее" значит читатель уже прочёл пост — пересказ другими словами бесполезен.
+  // Это сигнал идти в web_search за фактами, которых в посте нет.
+  expand: u => `${u} просит подробнее. ВАЖНО: читатель уже прочитал пост — НЕ пересказывай его. Иди в web_search за фактами, которых в посте нет (цифры, детали, источники). Ответ всё равно 2-4 предложения одним абзацем.`,
+  explain: u => `${u} просит объяснить проще. Объясни как для умного нетехнического человека, 2-4 предложения одним абзацем.`,
+  compare: u => `${u} просит сравнение. Сравни кратко - что лучше, хуже, в каком контексте, 2-4 предложения одним абзацем.`,
   freeform: u => `${u} написал комментарий к посту. Ответь по делу, в своём стиле стажёра.`,
 };
 
@@ -108,8 +110,13 @@ export interface ComposeUserMessageArgs {
 // Post-processing safety net: even with explicit "no em-dash" system prompts,
 // Haiku occasionally emits "—". QA probes flagged this twice in 10 scenarios.
 // Persona doc forbids em-dash; replace with regular hyphen before sending.
+// Also strips the recurring "Bosque," opener — a Haiku artifact that appears
+// when the model tries to greet the reader as "Босс" and tokenizes weirdly.
 export function sanitizeCommentResponse(text: string): string {
-  return text.replace(/—/g, '-');
+  return text
+    .replace(/^\s*(bosque|босс|шеф|boss)[\s,.:!]+/i, '')
+    .replace(/—/g, '-')
+    .trim();
 }
 
 export function composeCommentUserMessage(args: ComposeUserMessageArgs): string {
