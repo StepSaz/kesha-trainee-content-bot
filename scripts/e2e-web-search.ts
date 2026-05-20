@@ -76,12 +76,12 @@ const SCENARIOS: Scenario[] = [
 ];
 
 function checkEnv(): void {
-  const missing: string[] = [];
-  if (!process.env.ANTHROPIC_API_KEY) missing.push('ANTHROPIC_API_KEY');
-  if (!process.env.TAVILY_API_KEY) missing.push('TAVILY_API_KEY');
-  if (missing.length > 0) {
-    console.error(`Missing env: ${missing.join(', ')}`);
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error('Missing env: ANTHROPIC_API_KEY');
     process.exit(1);
+  }
+  if (!process.env.TAVILY_API_KEY) {
+    console.warn('⚠️  TAVILY_API_KEY not set — web_search tool will return empty results, but call-decision checks still work.');
   }
 }
 
