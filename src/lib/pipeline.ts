@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { callClaude, callClaudeStructured, type ToolDef } from './claude.js';
-import { fetchHackerNewsContext, fetchLightWebSearch } from './sources.js';
+import { fetchHackerNewsContext, fetchLightWebSearch, normalizeUrl } from './sources.js';
 import { validatePost } from './validator.js';
 import { findHallucinated } from './url-checker.js';
 import { type MemoryEntry, findCallbacks } from './memory.js';
@@ -199,10 +199,13 @@ async function fetchWebContext(cfg: PipelineConfig): Promise<string> {
 async function selectTopics(hnContext: string, webContext: string, cfg: PipelineConfig, memoryEntries?: MemoryEntry[]): Promise<SelectedTopics> {
   const systemPrompt = `You are a content curator for a Russian-language Telegram channel about AI and tech. Audience: IT analysts, product managers, and a broad tech audience. Practical impact and ecosystem significance matter more than technical depth.
 
+CRITICAL - ANTI-DUPLICATION HAS ABSOLUTE PRIORITY:
+The anti-duplication guidelines (detailed below under "Правила анти-дублирования") have absolute authority and take priority over the TIER 1 rule. Even if a public announcement from OpenAI, Anthropic, Google, or Meta represents a Tier 1 item, if it has already been covered in a recent post (listed under "ТЕМЫ ИЗ ПОСЛЕДНИХ ПОСТОВ"), you MUST EXCLUDE IT. Duplicate announcements are strictly forbidden. Only allow a follow-up if there is a major new, distinct development, and you must frame it clearly as a continuation/reaction, not a new launch.
+
 Select topics using this tiered rubric:
 
-TIER 1 - Always include (if within 7-day window):
-Any public-facing announcement, product launch, or strategic move from the four major AI vendors: Anthropic, OpenAI, Google, Meta. If it is from one of these four and it is public, it belongs in the digest.
+TIER 1 - Always include (if within 7-day window and NOT already covered):
+Any public-facing announcement, product launch, or strategic move from the four major AI vendors: Anthropic, OpenAI, Google, Meta. If it is from one of these four, is public, and has NOT been covered in recent weeks, it belongs in the digest.
 
 TIER 2 - Include if there is room (fill up to 5 topics):
 - Ecosystem milestones - install/user milestones, ownership changes, acquisitions, large partnerships
@@ -407,12 +410,21 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
     // Step 0: Gather context — HN + light web search in parallel
     const t0 = Date.now();
 
+    const excludeUrls = new Set<string>();
+    if (options.memoryEntries) {
+      for (const entry of options.memoryEntries) {
+        if (entry.url) {
+          excludeUrls.add(normalizeUrl(entry.url));
+        }
+      }
+    }
+
     const [hnResult, webContext] = await Promise.all([
-      fetchHackerNewsContext().catch(err => {
+      fetchHackerNewsContext(excludeUrls).catch(err => {
         console.warn('[pipeline] HN fetch failed:', err);
         return { context: '', itemCount: 0 };
       }),
-      fetchLightWebSearch(),
+      fetchLightWebSearch(excludeUrls),
     ]);
     const hnContext = hnResult.context;
     timing.gatherContext = Date.now() - t0;

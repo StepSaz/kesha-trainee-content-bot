@@ -4,6 +4,71 @@ import { getStore } from '@netlify/blobs';
 import { XMLParser } from 'fast-xml-parser';
 import { callClaude } from './claude.js';
 
+// ── URL Normalization & Filtering helpers ──────────────────────────────────────
+
+export function normalizeUrl(url: string): string {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url.trim());
+    const paramsToKeep = new URLSearchParams();
+    for (const [key, value] of parsed.searchParams.entries()) {
+      const lowerKey = key.toLowerCase();
+      if (
+        !lowerKey.startsWith('utm_') &&
+        lowerKey !== 'ref' &&
+        lowerKey !== 'source' &&
+        lowerKey !== 'ref_src' &&
+        lowerKey !== 'referrer' &&
+        lowerKey !== 'feature'
+      ) {
+        paramsToKeep.append(key, value);
+      }
+    }
+    
+    let host = parsed.hostname.toLowerCase();
+    if (host.startsWith('www.')) {
+      host = host.substring(4);
+    }
+    
+    let pathname = parsed.pathname;
+    if (pathname.endsWith('/')) {
+      pathname = pathname.slice(0, -1);
+    }
+    
+    const search = paramsToKeep.toString();
+    const searchString = search ? `?${search}` : '';
+    
+    return `${host}${pathname}${searchString}`;
+  } catch {
+    let normalized = url.trim().toLowerCase();
+    normalized = normalized.replace(/^https?:\/\//, '');
+    normalized = normalized.replace(/^www\./, '');
+    const hashIdx = normalized.indexOf('#');
+    if (hashIdx !== -1) {
+      normalized = normalized.substring(0, hashIdx);
+    }
+    const queryIdx = normalized.indexOf('?');
+    if (queryIdx !== -1) {
+      const path = normalized.substring(0, queryIdx);
+      const search = normalized.substring(queryIdx + 1);
+      const params = search.split('&').filter(p => {
+        const key = p.split('=')[0];
+        return !key.startsWith('utm_') && key !== 'ref' && key !== 'source';
+      }).join('&');
+      normalized = path + (params ? `?${params}` : '');
+    }
+    if (normalized.endsWith('/')) {
+      normalized = normalized.slice(0, -1);
+    }
+    return normalized;
+  }
+}
+
+function isExcluded(url: string | undefined, excludeUrls?: Set<string>): boolean {
+  if (!url || !excludeUrls) return false;
+  return excludeUrls.has(normalizeUrl(url));
+}
+
 // ── Config types ─────────────────────────────────────────────────────────────
 
 interface HNConfig {
@@ -57,7 +122,7 @@ async function fetchWithTimeout(url: string, ms = 8000): Promise<Response> {
   }
 }
 
-async function fetchHN(cfg: HNConfig): Promise<{ lines: string[]; urls: string[] }> {
+async function fetchHN(cfg: HNConfig, excludeUrls?: Set<string>): Promise<{ lines: string[]; urls: string[] }> {
   const resp = await fetchWithTimeout(cfg.url);
   const data = await resp.json() as HNFeedResponse;
 
@@ -65,18 +130,20 @@ async function fetchHN(cfg: HNConfig): Promise<{ lines: string[]; urls: string[]
   const keywords = cfg.keywords ?? [];
   const filtered = items
     .filter(item => matchesKeywords(item, keywords))
-    .sort((a, b) => (b.agg_score ?? 0) - (a.agg_score ?? 0))
-    .slice(0, cfg.max_items);
+    .sort((a, b) => (b.agg_score ?? 0) - (a.agg_score ?? 0));
 
-  if (filtered.length === 0) return { lines: [], urls: [] };
+  const unique = filtered.filter(item => !isExcluded(item.url, excludeUrls));
+  const sliced = unique.slice(0, cfg.max_items);
 
-  const lines = filtered.map((item, i) => {
+  if (sliced.length === 0) return { lines: [], urls: [] };
+
+  const lines = sliced.map((item, i) => {
     const tldr = item.ai_summary?.tldr?.trim();
     const summary = tldr ? `\n   TL;DR: ${tldr}` : '';
     return `${i + 1}. ${item.title ?? 'No title'}\n   ${item.url ?? ''}${summary}`;
   });
 
-  const urls = filtered.map(item => item.url).filter((u): u is string => !!u);
+  const urls = sliced.map(item => item.url).filter((u): u is string => !!u);
 
   return { lines, urls };
 }
@@ -111,7 +178,7 @@ function extractTitle(titleField: unknown): string {
   return '';
 }
 
-async function fetchRss(feedUrl: string): Promise<{ lines: string[]; urls: string[] }> {
+async function fetchRss(feedUrl: string, excludeUrls?: Set<string>): Promise<{ lines: string[]; urls: string[] }> {
   const resp = await fetchWithTimeout(feedUrl);
   const xml = await resp.text();
   const parsed = xmlParser.parse(xml);
@@ -123,13 +190,17 @@ async function fetchRss(feedUrl: string): Promise<{ lines: string[]; urls: strin
   const lines: string[] = [];
   const urls: string[] = [];
 
-  for (const item of items.slice(0, 5)) {
+  for (const item of items) {
     const it = item as Record<string, unknown>;
     const title = extractTitle(it.title);
     const link = extractLink(it.link);
     if (title && link) {
+      if (isExcluded(link, excludeUrls)) {
+        continue;
+      }
       lines.push(`- ${title}\n  ${link}`);
       urls.push(link);
+      if (lines.length >= 5) break;
     }
   }
 
@@ -146,10 +217,23 @@ interface CacheEntry {
   fetchedAt: string;
 }
 
-async function readCache(): Promise<SourceContext | null> {
+function getCacheKey(excludeUrls?: Set<string>): string {
+  if (!excludeUrls || excludeUrls.size === 0) return CACHE_KEY;
+  const sorted = Array.from(excludeUrls).sort();
+  const serialized = sorted.join(',');
+  let hash = 0;
+  for (let i = 0; i < serialized.length; i++) {
+    hash = (hash << 5) - hash + serialized.charCodeAt(i);
+    hash |= 0;
+  }
+  return `${CACHE_KEY}-${hash}`;
+}
+
+async function readCache(excludeUrls?: Set<string>): Promise<SourceContext | null> {
   try {
     const store = getStore('kesha');
-    const entry = await store.get(CACHE_KEY, { type: 'json' }) as CacheEntry | null;
+    const key = getCacheKey(excludeUrls);
+    const entry = await store.get(key, { type: 'json' }) as CacheEntry | null;
     if (!entry) return null;
     if (Date.now() - new Date(entry.fetchedAt).getTime() > CACHE_TTL_MS) return null;
     return entry.result;
@@ -158,10 +242,11 @@ async function readCache(): Promise<SourceContext | null> {
   }
 }
 
-async function writeCache(result: SourceContext): Promise<void> {
+async function writeCache(result: SourceContext, excludeUrls?: Set<string>): Promise<void> {
   try {
     const store = getStore('kesha');
-    await store.setJSON(CACHE_KEY, { result, fetchedAt: new Date().toISOString() } satisfies CacheEntry);
+    const key = getCacheKey(excludeUrls);
+    await store.setJSON(key, { result, fetchedAt: new Date().toISOString() } satisfies CacheEntry);
   } catch {
     // cache write is non-fatal
   }
@@ -169,8 +254,8 @@ async function writeCache(result: SourceContext): Promise<void> {
 
 // ── Public fetch function ────────────────────────────────────────────────────
 
-export async function fetchSourceContext(): Promise<SourceContext> {
-  const cached = await readCache();
+export async function fetchSourceContext(excludeUrls?: Set<string>): Promise<SourceContext> {
+  const cached = await readCache(excludeUrls);
   if (cached) {
     console.log('[sources] cache hit');
     return cached;
@@ -180,9 +265,9 @@ export async function fetchSourceContext(): Promise<SourceContext> {
   const cfg = JSON.parse(readFileSync(sourcesPath, 'utf-8')) as SourcesConfig;
   const rssFeedUrls = (cfg.priority_sources ?? []).filter(s => s.startsWith('http'));
 
-  const hn = await fetchHN(cfg.hackernews_api);
+  const hn = await fetchHN(cfg.hackernews_api, excludeUrls);
 
-  const rssSettled = await Promise.allSettled(rssFeedUrls.map(url => fetchRss(url)));
+  const rssSettled = await Promise.allSettled(rssFeedUrls.map(url => fetchRss(url, excludeUrls)));
 
   const rssSections: string[] = [];
   for (let i = 0; i < rssSettled.length; i++) {
@@ -211,7 +296,7 @@ export async function fetchSourceContext(): Promise<SourceContext> {
     itemCount: hn.lines.length + rssItemCount,
   };
 
-  await writeCache(result);
+  await writeCache(result, excludeUrls);
   return result;
 }
 
@@ -226,7 +311,7 @@ interface WebNewsItem {
   date: string; // YYYY-MM-DD
 }
 
-export async function fetchLightWebSearch(): Promise<string> {
+export async function fetchLightWebSearch(excludeUrls?: Set<string>): Promise<string> {
   const sourcesPath = join(process.cwd(), 'src/config/sources.json');
   const pipelinePath = join(process.cwd(), 'src/config/pipeline.json');
   const sources = JSON.parse(readFileSync(sourcesPath, 'utf-8')) as {
@@ -297,12 +382,19 @@ export async function fetchLightWebSearch(): Promise<string> {
 
     // Programmatic date filter — do not trust the model to self-filter
     const fresh = items.filter(item => item.date && item.headline && item.url && item.date >= cutoff);
+    const unique = fresh.filter(item => !isExcluded(item.url, excludeUrls));
+
     const stale = items.length - fresh.length;
     if (stale > 0) {
       console.log(`[sources] light web query ${i + 1}: dropped ${stale} stale item(s) (before ${cutoff})`);
     }
 
-    for (const item of fresh) {
+    const excludedCount = fresh.length - unique.length;
+    if (excludedCount > 0) {
+      console.log(`[sources] light web query ${i + 1}: programmatically excluded ${excludedCount} duplicate URL(s)`);
+    }
+
+    for (const item of unique) {
       allItems.push(`${item.headline}\n${item.url}\n${item.date}`);
     }
   }

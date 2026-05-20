@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../claude.js', () => ({ callClaude: vi.fn(), callClaudeStructured: vi.fn() }));
-vi.mock('../sources.js', () => ({ fetchHackerNewsContext: vi.fn(), fetchLightWebSearch: vi.fn() }));
+vi.mock('../sources.js', async () => {
+  const actual = await vi.importActual<typeof import('../sources.js')>('../sources.js');
+  return {
+    ...actual,
+    fetchHackerNewsContext: vi.fn(),
+    fetchLightWebSearch: vi.fn(),
+  };
+});
 vi.mock('../validator.js', () => ({ validatePost: vi.fn() }));
 vi.mock('../url-checker.js', () => ({ findHallucinated: vi.fn() }));
 vi.mock('../memory.js', () => ({

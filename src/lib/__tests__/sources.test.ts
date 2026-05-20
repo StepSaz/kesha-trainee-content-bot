@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchSourceContext, fetchLightWebSearch } from '../sources.js';
+import { fetchSourceContext, fetchLightWebSearch, normalizeUrl } from '../sources.js';
 import { callClaude } from '../claude.js';
 
 // Mocking @netlify/blobs so cache always misses in tests (non-Netlify env).
@@ -132,6 +132,20 @@ describe('fetchSourceContext — HN feed', () => {
     const { context } = await fetchSourceContext();
     expect(context).toContain('New OpenAI feature');
     expect(context).not.toContain('TL;DR');
+  });
+
+  it('excludes HN items present in excludeUrls', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      json: async () => SAMPLE_FEED,
+      text: async () => '',
+    }));
+
+    const exclude = new Set([normalizeUrl('https://www.example.com/uber/')]);
+    const { context, itemCount } = await fetchSourceContext(exclude);
+
+    expect(context).toContain('Grok 4.3 released');
+    expect(context).not.toContain('Uber spent its AI budget');
+    expect(itemCount).toBe(1);
   });
 });
 
@@ -266,5 +280,34 @@ describe('fetchLightWebSearch', () => {
     calls.forEach(([args]) => {
       expect(args.userMessage).toContain(year);
     });
+  });
+
+  it('excludes search items present in excludeUrls', async () => {
+    const mixed = JSON.stringify([
+      { headline: 'Fresh news A', url: 'https://example.com/fresh-a', date: yesterday },
+      { headline: 'Fresh news B', url: 'https://example.com/fresh-b', date: yesterday },
+    ]);
+    mockCallClaude
+      .mockResolvedValueOnce(mixed)
+      .mockResolvedValueOnce('[]');
+
+    const exclude = new Set([normalizeUrl('https://example.com/fresh-b')]);
+    const result = await fetchLightWebSearch(exclude);
+
+    expect(result).toContain('Fresh news A');
+    expect(result).not.toContain('Fresh news B');
+  });
+});
+
+describe('normalizeUrl', () => {
+  it('strips protocols, www, hash, trailing slash, and UTM parameters', () => {
+    expect(normalizeUrl('https://www.example.com/some/path/?utm_source=feed&ref=123#hash')).toBe('example.com/some/path');
+    expect(normalizeUrl('http://example.com/path/')).toBe('example.com/path');
+    expect(normalizeUrl('https://example.com?v=123&utm_medium=email')).toBe('example.com?v=123');
+    expect(normalizeUrl('example.com/')).toBe('example.com');
+  });
+
+  it('keeps important query parameters intact', () => {
+    expect(normalizeUrl('https://youtube.com/watch?v=dQw4w9WgXcQ')).toBe('youtube.com/watch?v=dQw4w9WgXcQ');
   });
 });
