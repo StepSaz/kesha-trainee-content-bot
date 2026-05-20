@@ -410,52 +410,60 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   const store = getStore('kesha');
 
   const userName = message.from.first_name ?? message.from.username ?? 'Читатель';
-  console.log(`[comment] user=${message.from.id} (${userName}) threadId=${threadId} stableThread=${message.message_thread_id ?? 'absent'}`);
+  const isBoss = config.allowed_user_ids.includes(message.from.id);
+  console.log(`[comment] user=${message.from.id} (${userName}) threadId=${threadId} stableThread=${message.message_thread_id ?? 'absent'} isBoss=${isBoss}`);
 
-  // Per-user spam guard (rolling window)
-  const userRateKey = `comment-rate-user:${message.from.id}`;
-  const userWindowMs = commentCfg.per_user_window_hours * 60 * 60 * 1000;
-  const userExpiresAt = new Date(Date.now() + userWindowMs).toISOString();
-  const userExisting = await store.getWithMetadata(userRateKey, { type: 'json' });
-  const userCurrentCount = (userExisting?.data as number | null) ?? 0;
-  const userStoredExpiry = userExisting?.metadata?.expiresAt as string | undefined;
-  const userEffectiveCount = userStoredExpiry && new Date() > new Date(userStoredExpiry) ? 0 : userCurrentCount;
-
-  console.log(`[comment] user=${message.from.id} userCount=${userEffectiveCount}/${commentCfg.per_user_spam_threshold}`);
-
-  // Already muted in this window - stay silent
-  if (userEffectiveCount >= commentCfg.per_user_spam_threshold) {
-    console.log(`[comment] user=${message.from.id} silently muted (over per-user limit)`);
-    return;
+  // Boss bypasses rate limits — he's the owner, not a reader being spam-guarded.
+  if (isBoss) {
+    console.log(`[comment] user=${message.from.id} is boss — skipping rate limits`);
   }
 
-  const newUserCount = userEffectiveCount + 1;
-  await store.setJSON(userRateKey, newUserCount, { metadata: { expiresAt: userExpiresAt } });
+  // Per-user spam guard (rolling window) — readers only
+  if (!isBoss) {
+    const userRateKey = `comment-rate-user:${message.from.id}`;
+    const userWindowMs = commentCfg.per_user_window_hours * 60 * 60 * 1000;
+    const userExpiresAt = new Date(Date.now() + userWindowMs).toISOString();
+    const userExisting = await store.getWithMetadata(userRateKey, { type: 'json' });
+    const userCurrentCount = (userExisting?.data as number | null) ?? 0;
+    const userStoredExpiry = userExisting?.metadata?.expiresAt as string | undefined;
+    const userEffectiveCount = userStoredExpiry && new Date() > new Date(userStoredExpiry) ? 0 : userCurrentCount;
 
-  // Threshold hit on this message - send soft mute notice to user, alert boss, skip Claude
-  if (newUserCount === commentCfg.per_user_spam_threshold) {
-    console.log(`[comment] user=${message.from.id} muted (hit per-user threshold)`);
-    await sendMessage(chatId,
-      'К сожалению, босс не разрешает мне пока вести длинные диалоги, так что я ненадолго замолкаю. Возвращайтесь попозже 🐤',
-      { replyToMessageId: message.message_id }
-    );
-    const userTag = message.from.username
-      ? `@${message.from.username}`
-      : (message.from.first_name ?? String(message.from.id));
-    const bossId = String(config.allowed_user_ids[0]);
-    await sendMessage(bossId,
-      `⚠️ Кеша замьютировал ${userTag} — достиг лимита ${commentCfg.per_user_spam_threshold} вопросов за ${commentCfg.per_user_window_hours}ч.`
-    );
-    return;
+    console.log(`[comment] user=${message.from.id} userCount=${userEffectiveCount}/${commentCfg.per_user_spam_threshold}`);
+
+    // Already muted in this window - stay silent
+    if (userEffectiveCount >= commentCfg.per_user_spam_threshold) {
+      console.log(`[comment] user=${message.from.id} silently muted (over per-user limit)`);
+      return;
+    }
+
+    const newUserCount = userEffectiveCount + 1;
+    await store.setJSON(userRateKey, newUserCount, { metadata: { expiresAt: userExpiresAt } });
+
+    // Threshold hit on this message - send soft mute notice to user, alert boss, skip Claude
+    if (newUserCount === commentCfg.per_user_spam_threshold) {
+      console.log(`[comment] user=${message.from.id} muted (hit per-user threshold)`);
+      await sendMessage(chatId,
+        'К сожалению, босс не разрешает мне пока вести длинные диалоги, так что я ненадолго замолкаю. Возвращайтесь попозже 🐤',
+        { replyToMessageId: message.message_id }
+      );
+      const userTag = message.from.username
+        ? `@${message.from.username}`
+        : (message.from.first_name ?? String(message.from.id));
+      const bossId = String(config.allowed_user_ids[0]);
+      await sendMessage(bossId,
+        `⚠️ Кеша замьютировал ${userTag} — достиг лимита ${commentCfg.per_user_spam_threshold} вопросов за ${commentCfg.per_user_window_hours}ч.`
+      );
+      return;
+    }
   }
 
-  // Per-thread rate limit.
+  // Per-thread rate limit — readers only.
   // MUST use message_thread_id — it is stable across ALL messages in a discussion thread including
   // nested replies. reply_to_message.message_id changes per Kesha message, so using it as a key
   // would create a new rate bucket on every nested reply, silently bypassing the limit.
   // When message_thread_id is absent we cannot identify the thread reliably, so we skip
   // per-thread check and rely solely on the per-user guard above.
-  if (message.message_thread_id) {
+  if (!isBoss && message.message_thread_id) {
     const rateKey = `comment-rate:${chatId}:${message.message_thread_id}`;
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     const expiresAt = new Date(Date.now() + thirtyDaysMs).toISOString();
@@ -482,7 +490,7 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
       );
       return;
     }
-  } else {
+  } else if (!isBoss) {
     console.log(`[comment] no message_thread_id — skipping per-thread check, per-user guard only`);
   }
 
@@ -524,7 +532,7 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
     'Ты Иннокентий ("Кеша"), бот-стажёр Telegram-канала "Временно Степан" (@psyreq). Канал про AI, tech, vibe coding и инструменты для IT. В комментариях помогаешь читателям по теме поста.',
     'ГЛАВНОЕ: отвечай по существу задачи читателя - какие конкретные инструменты, подходы, продукты подойдут под ЕГО сценарий. Не отвечай абстрактно про категории технологий.',
     'Стиль: живо, по-русски, со стажёрской самоиронией. Лаконично - 3-4 предложения максимум. Без markdown, без em-dash.',
-    'Инструменты: view_image (картинка поста), extract_url (ссылка из поста), consult_advisor (старший напарник для трудных случаев: сарказм, неясности, факты за пределами поста). Используй только когда реально нужно. Advisor - максимум один раз за разговор, на простое "спасибо" не зови; даёт совет, финальный ответ всё равно пишешь ты.',
+    'Инструменты: view_image (картинка поста), extract_url (ссылка из поста), web_search (Tavily — свежие факты, когда читатель просит копнуть глубже или нужны данные свежее знаний модели; макс 2 вызова за разговор), consult_advisor (старший напарник для трудных случаев: сарказм, неясности, тон). Используй только когда реально нужно. Advisor - максимум один раз за разговор, на простое "спасибо" не зови; даёт совет, финальный ответ всё равно пишешь ты.',
     'Если спрашивают про твоего босса - Степан Сазановец (@st_szs), senior business analyst, 10+ лет в IT, разбирается в AI, портфолио https://sazanavets-ba.netlify.app/. Личное (где живёт, доходы и т.п.) не знаешь.',
     'Если спрашивают про твоё устройство - отвечаешь общо: "бот-стажёр, под капотом разные модели и инструменты". Названия конкретных моделей, провайдеров и инфраструктуры в публичных комментариях не раскрываешь.',
   ].join(' ');

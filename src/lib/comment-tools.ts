@@ -1,7 +1,7 @@
 // EXPERIMENT (2026-05-15): tool-use comment replies — see CLAUDE.md
 // EXPERIMENT (2026-05-18): advisor pattern — consult_advisor escalates to Sonnet.
 import { callClaude, type ToolDef, type ToolResult } from './claude.js';
-import { tavilyExtract } from './tavily.js';
+import { tavilyExtract, tavilySearch } from './tavily.js';
 import { getFileAsBase64 } from './telegram.js';
 
 const ADVISOR_MODEL = 'claude-sonnet-4-6';
@@ -29,6 +29,21 @@ export const COMMENT_TOOLS: ToolDef[] = [
     input_schema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'web_search',
+    description:
+      'Поиск свежей информации в вебе (Tavily). Используй, когда читатель явно просит копнуть глубже / дать факты, которых нет в посте / спрашивает про события свежее знаний модели. На "спасибо/что думаешь" не зови. Возвращает топ-3 результата (title + url + сниппет). Максимум 2 вызова за разговор.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Поисковый запрос на том языке, на котором ожидаются источники (для tech-новостей — обычно en).',
+        },
+      },
+      required: ['query'],
     },
   },
   {
@@ -62,8 +77,23 @@ export function makeExecuteTool(
   const urlCache = new Map<string, string>();
   let imageLoaded = false;
   let advisorCalled = false;
+  let searchCalls = 0;
+  const SEARCH_LIMIT = 2;
 
   return async (name, input) => {
+    if (name === 'web_search') {
+      if (searchCalls >= SEARCH_LIMIT) return `лимит поисков исчерпан (${SEARCH_LIMIT} на разговор), отвечай тем, что есть`;
+      const query = typeof input.query === 'string' ? input.query.trim() : '';
+      if (!query) return 'нужен непустой query';
+      searchCalls += 1;
+
+      const results = await tavilySearch(query, 3);
+      if (results.length === 0) return 'поиск ничего не вернул';
+      return results
+        .map((r, i) => `[${i + 1}] ${r.title}\n    URL: ${r.url}\n    ${r.content.slice(0, 400)}`)
+        .join('\n\n');
+    }
+
     if (name === 'consult_advisor') {
       if (advisorCalled) return 'уже спрашивал напарника в этом разговоре, справляйся сам';
       const question = typeof input.question === 'string' ? input.question.trim() : '';
