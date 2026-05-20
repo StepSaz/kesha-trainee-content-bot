@@ -49,6 +49,15 @@ export interface ToolDef {
 
 export type ToolResult = string | { kind: 'image'; base64: string; mediaType: ImageMediaType };
 
+// Server-side tools (e.g. web_search_20250305) — Anthropic executes them
+// internally, no executeTool callback is invoked. Pass them alongside the
+// regular ToolDef list and they get merged into the tools array sent to the API.
+export interface ServerToolSpec {
+  type: string;
+  name: string;
+  max_uses?: number;
+}
+
 export interface CallClaudeWithToolsParams {
   systemPrompt: string;
   userMessage: string;
@@ -56,9 +65,14 @@ export interface CallClaudeWithToolsParams {
   temperature: number;
   maxTokens: number;
   tools: ToolDef[];
+  serverTools?: ServerToolSpec[];
   executeTool: (name: string, input: Record<string, unknown>) => Promise<ToolResult>;
   maxIterations: number;
   conversationHistory?: ConversationTurn[];
+  // Fires for every tool invocation observed in the response — including
+  // server-side ones that don't go through executeTool. Useful for telemetry
+  // and tests.
+  onToolUse?: (name: string, input: unknown, source: 'client' | 'server') => void;
 }
 
 function extractText(response: Anthropic.Message): string {
@@ -79,6 +93,8 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
     { role: 'user', content: params.userMessage },
   ];
 
+  const mergedTools = [...(params.serverTools ?? []), ...params.tools];
+
   for (let i = 0; i < params.maxIterations; i++) {
     const response = await client.messages.create({
       model: params.model,
@@ -86,8 +102,19 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
       messages,
       temperature: params.temperature,
       max_tokens: params.maxTokens,
-      tools: params.tools as unknown as Anthropic.Tool[],
+      tools: mergedTools as unknown as Anthropic.Tool[],
     } as any);
+
+    // Surface server-side tool calls for telemetry/tests even though they
+    // don't need a client-side response.
+    if (params.onToolUse) {
+      for (const block of response.content) {
+        const b = block as unknown as { type: string; name?: string; input?: unknown };
+        if (b.type === 'server_tool_use' && b.name) {
+          params.onToolUse(b.name, b.input, 'server');
+        }
+      }
+    }
 
     if (response.stop_reason !== 'tool_use') {
       return extractText(response);
@@ -101,6 +128,7 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of toolUseBlocks) {
       console.log(`[claude:tools] iteration=${i + 1} tool=${block.name} input=${JSON.stringify(block.input)}`);
+      if (params.onToolUse) params.onToolUse(block.name, block.input, 'client');
       const result = await params.executeTool(block.name, block.input as Record<string, unknown>);
       if (typeof result === 'string') {
         toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: result });

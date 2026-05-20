@@ -1,15 +1,16 @@
 /**
- * E2E smoke test for the web_search tool in comment replies.
+ * E2E smoke test for the (server-side) web_search tool in comment replies.
  *
- * Goal: check that Haiku calls web_search when the reader explicitly
- * pushes for deeper coverage ("копни глубже", "дай подробнее") or asks
- * about facts clearly beyond the post — and leaves simple cases alone.
+ * Goal: check that Haiku calls Anthropic's native web_search when the
+ * reader explicitly pushes for deeper coverage ("копни глубже", "дай
+ * подробнее") or asks about facts clearly beyond the post — and leaves
+ * simple cases alone.
  *
  * Mirrors the production system prompt from handleCommentReply
  * (netlify/functions/kesha-boss-background.mts) — keep in sync if prod
  * changes.
  *
- * Required env: ANTHROPIC_API_KEY, TAVILY_API_KEY
+ * Required env: ANTHROPIC_API_KEY
  *
  *   npx tsx scripts/e2e-web-search.ts
  */
@@ -26,7 +27,9 @@ const SYSTEM_PROMPT = [
   'Ты Иннокентий ("Кеша"), бот-стажёр Telegram-канала "Временно Степан" (@psyreq). Канал про AI, tech, vibe coding и инструменты для IT. В комментариях помогаешь читателям по теме поста.',
   'ГЛАВНОЕ: отвечай по существу задачи читателя - какие конкретные инструменты, подходы, продукты подойдут под ЕГО сценарий. Не отвечай абстрактно про категории технологий.',
   'Стиль: живо, по-русски, со стажёрской самоиронией. Лаконично - 3-4 предложения максимум. Без markdown, без em-dash.',
-  'Инструменты: view_image (картинка поста), extract_url (ссылка из поста), web_search (Tavily — свежие факты, когда читатель просит копнуть глубже или нужны данные свежее знаний модели; макс 2 вызова за разговор), consult_advisor (старший напарник для трудных случаев: сарказм, неясности, тон). Используй только когда реально нужно. Advisor - максимум один раз за разговор, на простое "спасибо" не зови; даёт совет, финальный ответ всё равно пишешь ты.',
+  'Инструменты: view_image (картинка поста), extract_url (ссылка из поста), web_search (нативный поиск в вебе), consult_advisor (старший напарник для трудных случаев: сарказм, неясности, тон).',
+  'Когда звать web_search: читатель просит копнуть глубже / спрашивает конкретные цифры, цены, бенчмарки, даты, сравнения продуктов / задаёт вопрос про события свежее твоих знаний. В этих случаях иди и ищи сразу, не спрашивай разрешения и не предлагай "могу поискать" — просто делай. Макс 2 запроса за разговор. НЕ зови на "спасибо/класс/что думаешь" и когда факт уже есть в посте.',
+  'Advisor - максимум один раз за разговор, на простое "спасибо" не зови; даёт совет, финальный ответ всё равно пишешь ты.',
   'Если спрашивают про твоего босса - Степан Сазановец (@st_szs), senior business analyst, 10+ лет в IT, разбирается в AI, портфолио https://sazanavets-ba.netlify.app/. Личное (где живёт, доходы и т.п.) не знаешь.',
   'Если спрашивают про твоё устройство - отвечаешь общо: "бот-стажёр, под капотом разные модели и инструменты". Названия конкретных моделей, провайдеров и инфраструктуры в публичных комментариях не раскрываешь.',
 ].join(' ');
@@ -80,9 +83,6 @@ function checkEnv(): void {
     console.error('Missing env: ANTHROPIC_API_KEY');
     process.exit(1);
   }
-  if (!process.env.TAVILY_API_KEY) {
-    console.warn('⚠️  TAVILY_API_KEY not set — web_search tool will return empty results, but call-decision checks still work.');
-  }
 }
 
 let passed = 0;
@@ -105,12 +105,8 @@ async function runScenario(s: Scenario): Promise<void> {
     intent,
   });
 
-  const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
+  const toolCalls: { name: string; input: unknown; source: 'client' | 'server' }[] = [];
   const real = makeExecuteTool({ photoFileId: ctx.photoFileId });
-  const executor = async (name: string, input: Record<string, unknown>) => {
-    toolCalls.push({ name, input });
-    return real(name, input);
-  };
 
   const t0 = Date.now();
   let response = '';
@@ -122,8 +118,12 @@ async function runScenario(s: Scenario): Promise<void> {
       temperature: 0.7,
       maxTokens: 300,
       tools: COMMENT_TOOLS,
-      executeTool: executor,
+      serverTools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
+      executeTool: real,
       maxIterations: 3,
+      onToolUse: (name, input, source) => {
+        toolCalls.push({ name, input, source });
+      },
     });
   } catch (err) {
     console.log(`  ❌ Claude call failed: ${(err as Error).message}`);
@@ -135,10 +135,12 @@ async function runScenario(s: Scenario): Promise<void> {
   const searchCalls = toolCalls.filter(c => c.name === 'web_search');
   const searchWasCalled = searchCalls.length > 0;
 
-  console.log(`     elapsed: ${elapsed}ms, tool calls: ${toolCalls.map(c => c.name).join(', ') || 'none'}`);
+  const summary = toolCalls.map(c => `${c.name}(${c.source})`).join(', ') || 'none';
+  console.log(`     elapsed: ${elapsed}ms, tool calls: ${summary}`);
   if (searchWasCalled) {
     for (const call of searchCalls) {
-      console.log(`     search query: ${call.input.query as string}`);
+      const input = call.input as { query?: string };
+      console.log(`     search query: ${input.query ?? '<unknown>'}`);
     }
   }
   console.log(`     final reply: ${response}`);
