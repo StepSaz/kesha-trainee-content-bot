@@ -1,5 +1,8 @@
 node_modules/
 dist/
 .env
+.DS_Store
 .netlify/
+.claude/worktrees/
+.agents/
 .worktrees/

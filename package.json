@@ -8,7 +8,14 @@
     "setup:managed": "npx tsx scripts/setup-managed-agent.ts",
     "setup:boss-webhook": "npx tsx scripts/setup-boss-webhook.ts",
     "verify:hn": "npx tsx scripts/verify-hn.ts",
+    "e2e": "npm run e2e:advisor && npm run e2e:web-search && npm run e2e:comment-reply",
+    "e2e:advisor": "npx tsx scripts/e2e-advisor.ts",
     "e2e:comment-reply": "npx tsx scripts/e2e-comment-reply.ts",
+    "e2e:web-search": "npx tsx scripts/e2e-web-search.ts",
+    "e2e:netlify": "npx netlify-cli@latest dev:exec --context production -- npm run e2e",
+    "e2e:netlify:advisor": "npx netlify-cli@latest dev:exec --context production -- npm run e2e:advisor",
+    "e2e:netlify:comment-reply": "npx netlify-cli@latest dev:exec --context production -- npm run e2e:comment-reply",
+    "e2e:netlify:web-search": "npx netlify-cli@latest dev:exec --context production -- npm run e2e:web-search",
     "qa:kesha": "npx tsx scripts/kesha-qa.ts"
   },
   "dependencies": {

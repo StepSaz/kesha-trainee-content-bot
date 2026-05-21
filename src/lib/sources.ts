@@ -8,8 +8,9 @@ import { callClaude } from './claude.js';
 
 export function normalizeUrl(url: string): string {
   if (!url) return '';
+  const raw = url.trim();
   try {
-    const parsed = new URL(url.trim());
+    const parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
     const paramsToKeep = new URLSearchParams();
     for (const [key, value] of parsed.searchParams.entries()) {
       const lowerKey = key.toLowerCase();
@@ -40,27 +41,7 @@ export function normalizeUrl(url: string): string {
     
     return `${host}${pathname}${searchString}`;
   } catch {
-    let normalized = url.trim().toLowerCase();
-    normalized = normalized.replace(/^https?:\/\//, '');
-    normalized = normalized.replace(/^www\./, '');
-    const hashIdx = normalized.indexOf('#');
-    if (hashIdx !== -1) {
-      normalized = normalized.substring(0, hashIdx);
-    }
-    const queryIdx = normalized.indexOf('?');
-    if (queryIdx !== -1) {
-      const path = normalized.substring(0, queryIdx);
-      const search = normalized.substring(queryIdx + 1);
-      const params = search.split('&').filter(p => {
-        const key = p.split('=')[0];
-        return !key.startsWith('utm_') && key !== 'ref' && key !== 'source';
-      }).join('&');
-      normalized = path + (params ? `?${params}` : '');
-    }
-    if (normalized.endsWith('/')) {
-      normalized = normalized.slice(0, -1);
-    }
-    return normalized;
+    return raw.toLowerCase();
   }
 }
 
@@ -217,23 +198,11 @@ interface CacheEntry {
   fetchedAt: string;
 }
 
-function getCacheKey(excludeUrls?: Set<string>): string {
-  if (!excludeUrls || excludeUrls.size === 0) return CACHE_KEY;
-  const sorted = Array.from(excludeUrls).sort();
-  const serialized = sorted.join(',');
-  let hash = 0;
-  for (let i = 0; i < serialized.length; i++) {
-    hash = (hash << 5) - hash + serialized.charCodeAt(i);
-    hash |= 0;
-  }
-  return `${CACHE_KEY}-${hash}`;
-}
-
 async function readCache(excludeUrls?: Set<string>): Promise<SourceContext | null> {
+  if (excludeUrls && excludeUrls.size > 0) return null;
   try {
     const store = getStore('kesha');
-    const key = getCacheKey(excludeUrls);
-    const entry = await store.get(key, { type: 'json' }) as CacheEntry | null;
+    const entry = await store.get(CACHE_KEY, { type: 'json' }) as CacheEntry | null;
     if (!entry) return null;
     if (Date.now() - new Date(entry.fetchedAt).getTime() > CACHE_TTL_MS) return null;
     return entry.result;
@@ -243,10 +212,10 @@ async function readCache(excludeUrls?: Set<string>): Promise<SourceContext | nul
 }
 
 async function writeCache(result: SourceContext, excludeUrls?: Set<string>): Promise<void> {
+  if (excludeUrls && excludeUrls.size > 0) return;
   try {
     const store = getStore('kesha');
-    const key = getCacheKey(excludeUrls);
-    await store.setJSON(key, { result, fetchedAt: new Date().toISOString() } satisfies CacheEntry);
+    await store.setJSON(CACHE_KEY, { result, fetchedAt: new Date().toISOString() } satisfies CacheEntry);
   } catch {
     // cache write is non-fatal
   }
