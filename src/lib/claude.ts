@@ -14,6 +14,25 @@ export interface CallClaudeParams {
   maxTokens: number;
   tools?: string[];
   conversationHistory?: ConversationTurn[];
+  // If true, mark the system prompt with cache_control: ephemeral.
+  // Anthropic prefix-caches the (tools + system) block on the first call and
+  // serves subsequent calls with identical bytes at ~10% input cost.
+  // Useful when the same system prompt is reused across pipeline steps
+  // (e.g. kesha-persona in generate → rewrite). 5-minute default TTL.
+  cacheSystem?: boolean;
+}
+
+function logCacheUsage(label: string, usage: Anthropic.Message['usage'] | undefined): void {
+  if (!usage) return; // tests / mocks may omit usage
+  const cw = (usage as { cache_creation_input_tokens?: number }).cache_creation_input_tokens ?? 0;
+  const cr = (usage as { cache_read_input_tokens?: number }).cache_read_input_tokens ?? 0;
+  const i = usage.input_tokens;
+  const o = usage.output_tokens;
+  if (cw || cr) {
+    console.log(`[claude:${label}] tokens in=${i} cache_write=${cw} cache_read=${cr} out=${o}`);
+  } else {
+    console.log(`[claude:${label}] tokens in=${i} out=${o}`);
+  }
 }
 
 export async function callClaude(params: CallClaudeParams): Promise<string> {
@@ -23,9 +42,16 @@ export async function callClaude(params: CallClaudeParams): Promise<string> {
     ? [{ type: 'web_search_20250305' as const, name: 'web_search' as const }]
     : undefined;
 
+  // Wrap system prompt in a structured block with cache_control when caching is requested.
+  // Anthropic silently skips caching for prompts shorter than the model's minimum (4096 for
+  // Haiku 4.5, 2048 for Sonnet 4.6), so this is safe to set even on smaller prompts.
+  const system = params.cacheSystem
+    ? [{ type: 'text' as const, text: params.systemPrompt, cache_control: { type: 'ephemeral' as const } }]
+    : params.systemPrompt;
+
   const response = await client.messages.create({
     model: params.model,
-    system: params.systemPrompt,
+    system,
     messages: [
       ...(params.conversationHistory ?? []),
       { role: 'user', content: params.userMessage },
@@ -34,6 +60,8 @@ export async function callClaude(params: CallClaudeParams): Promise<string> {
     max_tokens: params.maxTokens,
     ...(tools ? { tools } : {}),
   } as any);
+
+  logCacheUsage('callClaude', response.usage);
 
   return response.content
     .filter((block: Anthropic.ContentBlock): block is Anthropic.TextBlock => block.type === 'text')
@@ -185,6 +213,8 @@ export interface CallClaudeStructuredParams {
   temperature: number;
   maxTokens: number;
   tool: ToolDef;
+  // See callClaude.cacheSystem — same semantics.
+  cacheSystem?: boolean;
 }
 
 // Forces the model to call a single tool and returns its parsed input as a typed object.
@@ -192,15 +222,21 @@ export interface CallClaudeStructuredParams {
 export async function callClaudeStructured<T>(params: CallClaudeStructuredParams): Promise<T> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+  const system = params.cacheSystem
+    ? [{ type: 'text' as const, text: params.systemPrompt, cache_control: { type: 'ephemeral' as const } }]
+    : params.systemPrompt;
+
   const response = await client.messages.create({
     model: params.model,
-    system: params.systemPrompt,
+    system,
     messages: [{ role: 'user', content: params.userMessage }],
     temperature: params.temperature,
     max_tokens: params.maxTokens,
     tools: [params.tool],
     tool_choice: { type: 'tool', name: params.tool.name },
   } as any);
+
+  logCacheUsage('callClaudeStructured', response.usage);
 
   const block = response.content.find(
     (b: Anthropic.ContentBlock) => b.type === 'tool_use' && b.name === params.tool.name,

@@ -350,6 +350,10 @@ async function generatePost(
 
   return callClaude({
     systemPrompt: persona,
+    // kesha-persona is reused by rewritePost (and sometimes fixPost) within
+    // the same pipeline run. Cache the first write here so subsequent calls
+    // hit at ~10% input cost.
+    cacheSystem: true,
     userMessage: `Сегодня ${date}, ${time} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы:\n${topicsProse}${sparseNote}${topicNote}${introsBlock}${callbackBlock}${experienceNote}\n\nНапиши пост для Telegram-канала @psyreq в своём стиле.`,
     model: cfg.steps.generate.model,
     temperature: cfg.steps.generate.temperature,
@@ -377,6 +381,8 @@ async function rewritePost(draft: string, review: ReviewResult, cfg: PipelineCon
 
   return callClaude({
     systemPrompt: persona,
+    // Reads the persona cache written by generatePost on the same model (Sonnet 4.6).
+    cacheSystem: true,
     userMessage: `Вот черновик поста:\n\n${draft}\n\nВот фидбек редактора:\n\n${reviewText}\n\nПерепиши пост с учётом замечаний. Сохрани голос и характер Кеши.`,
     model: cfg.steps.rewrite.model,
     temperature: cfg.steps.rewrite.temperature,
@@ -391,6 +397,10 @@ async function fixPost(post: string, errors: string[], cfg: PipelineConfig): Pro
 
   return callClaude({
     systemPrompt: persona,
+    // fixPost runs on Haiku (separate cache namespace from Sonnet's generate/rewrite),
+    // but if fix is called more than once in a row (2 attempts allowed), the second
+    // call reads the cache written by the first.
+    cacheSystem: true,
     userMessage: `Пост не прошёл проверку. Вот ошибки:\n\n${errorList}\n\nВот пост:\n\n${post}\n\nИсправь только эти проблемы. Сохрани голос и характер Кеши. Верни только исправленный пост без пояснений.`,
     model: cfg.steps.fix.model,
     temperature: cfg.steps.fix.temperature,

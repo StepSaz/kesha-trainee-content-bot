@@ -82,6 +82,32 @@ describe('callClaude', () => {
       })
     );
   });
+
+  it('passes system prompt as plain string when cacheSystem is not set', async () => {
+    mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+
+    await callClaude(BASE_PARAMS);
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ system: 'You are helpful.' })
+    );
+  });
+
+  it('wraps system prompt in structured block with cache_control when cacheSystem is true', async () => {
+    mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+
+    await callClaude({ ...BASE_PARAMS, cacheSystem: true });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system: [{
+          type: 'text',
+          text: 'You are helpful.',
+          cache_control: { type: 'ephemeral' },
+        }],
+      })
+    );
+  });
 });
 
 describe('callClaudeWithTools', () => {
