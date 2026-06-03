@@ -58,26 +58,27 @@
 начинается с `/digest`, включая `/digestshort`, `/digest_anything`. Их нельзя молча
 трактовать как full digest.
 
-**Точное совпадение команды.** Роутинг-регексп требует границу после `/digest` или
-`/digest@bot`:
+**Парсер — единственный источник истины (P1).** Чтобы функция не принимала
+`/digestshort` за `full` даже при прямом вызове без внешнего guard, граница команды
+проверяется ВНУТРИ парсера, а сам он возвращает `null` для не-digest команд:
 ```ts
-/^\/digest(@\w+)?(\s|$)/i
-```
-- `/digest`, `/digest short`, `/digest@psyreqbot short` → попадают в `handleDigest`.
-- `/digestshort`, `/digest_short` → НЕ совпадают, проваливаются мимо (никакой обработки
-  дайджеста), как и сейчас для любой неизвестной команды.
-
-**Разбор варианта.** Чистая функция в `src/lib/boss-command-parser.ts` рядом с
-`parseCommand`:
-```ts
-export function parseDigestVariant(text: string): 'full' | 'short' {
-  const args = text.replace(/^\/digest(@\w+)?/i, '').trim();
-  const firstToken = args.split(/\s+/)[0]?.toLowerCase() ?? '';
+export function parseDigestVariant(text: string): 'full' | 'short' | null {
+  const m = text.match(/^\/digest(@\w+)?(?:\s+(.*))?$/i);
+  if (!m) return null;  // /digestshort, /digest_x → НЕ команда digest
+  const firstToken = (m[2] ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? '';
   return firstToken === 'short' ? 'short' : 'full';
 }
 ```
-Берёт ПЕРВЫЙ токен аргументов: `/digest short` и `/digest short extra` → short;
-`/digest`, `/digest foo` → full; регистр игнорируется.
+Поведение: `/digest`→full, `/digest short`→short, `/digest short extra`→short (первый
+токен), `/digest foo`→full, `/digest SHORT`→short (регистр), `/digestshort`→null,
+`/digest_short`→null. Функция в `src/lib/boss-command-parser.ts` рядом с `parseCommand`.
+
+**Роутинг** перестаёт дублировать regex — просто зовёт парсер:
+```ts
+const variant = parseDigestVariant(msg.text ?? '');
+if (variant) { await handleDigest(msg, variant); }
+```
+Так граница команды живёт в одном месте, и `/digestshort` не попадает в обработку.
 
 `handleDigest(message, variant)` выбирает функцию генерации:
 ```ts
@@ -127,9 +128,23 @@ export interface ShortDigestResult {
 - `rewriteShortPost(...)` — `kesha-short.txt` + фидбек ревьюера.
 - `fixShortPost(...)` — `kesha-short.txt` + список ошибок (как `fixPost`).
 
-Fix-луп копирует паттерн `generatePipelinePost`: `collectErrors(post)` =
-`validateShort(post).errors` + URL из `findHallucinated(post, [hnContext, webContext])`,
-до 2 попыток.
+Fix-луп копирует паттерн `generatePipelinePost`. `collectErrors(post)` собирает:
+1. `validateShort(post).errors` — статические структурные правила (см. §4);
+2. URL из `findHallucinated(post, [hnContext, webContext])`;
+3. **динамическую проверку количества (P1):** число буллетов `📎`+URL должно быть
+   РОВНО `selectedTopics.topics.length`. Статический `validateShort` про это не знает
+   (`requireLinkedSources(3)` пропустит 3 ссылки при 5 темах), поэтому проверка живёт
+   здесь, где известен `selectedTopics`:
+   ```ts
+   const expected = selectedTopics.topics.length;
+   const linked = countLinkedSources(post); // общий helper из validator.ts
+   if (linked !== expected) {
+     errors.push(`Expected ${expected} news items, found ${linked} 📎+URL lines`);
+   }
+   ```
+   `countLinkedSources` экспортируется из `validator.ts` и используется и тут, и в
+   `requireLinkedSources` — одна логика подсчёта. Это самый вероятный баг «всё зелёное,
+   но пост неполный», поэтому проверка обязательна. До 2 fix-попыток, как в полном.
 
 ### 3. Промпты — `src/config/`
 
@@ -155,19 +170,41 @@ Fix-луп копирует паттерн `generatePipelinePost`: `collectError
 ### 4. Валидатор — `src/lib/validator.ts`
 
 **Проблема (P1):** проверки «3 маркера 📎» недостаточно — пост с фейковым текстом-маркером
-без ссылок мог бы пройти. Нужна проверка, что каждый засчитанный пункт — это строка
-с маркером И ссылкой.
+без ссылок мог бы пройти. Нужна проверка, что каждый засчитанный пункт — это строка,
+которая НАЧИНАЕТСЯ с `📎` И содержит ссылку.
 
-Новое правило + `validateShort`:
+**Общий helper подсчёта** (используется и валидатором, и `collectErrors` в §2):
 ```ts
-const requireLinkedSources = (min: number): Rule => (t) => {
-  const linked = t.split('\n')
-    .filter(l => l.includes('📎') && /https?:\/\//.test(l))
-    .length;
-  return linked < min
-    ? `Too few linked sources: ${linked} line(s) with 📎+URL (min ${min})`
+const LINKED_SOURCE_LINE = /^📎\s+\S.*https?:\/\/\S+/u; // 📎 в начале строки + текст + URL
+export function countLinkedSources(t: string): number {
+  return t.split('\n').filter(l => LINKED_SOURCE_LINE.test(l.trim())).length;
+}
+```
+Regex по началу строки (P2) — не «📎 и http где-то в строке», а именно `📎` первым
+символом, затем текст новости, затем URL.
+
+**Новые правила.** Вывод (P2): после последней `📎`-строки должна быть хотя бы одна
+непустая строка без URL — это и есть вывод. Иначе reviewer мог дать `ok` посту из шапки
+и трёх ссылок без вывода. Запрет дефис-буллетов (P2): `noMarkdown` их не ловит:
+```ts
+const requireLinkedSources = (min: number): Rule => (t) =>
+  countLinkedSources(t) < min
+    ? `Too few linked sources: ${countLinkedSources(t)} 📎+URL line(s) (min ${min})`
     : null;
+
+const requireConclusion: Rule = (t) => {
+  const lines = t.split('\n').map(l => l.trim()).filter(Boolean);
+  let lastMarker = -1;
+  lines.forEach((l, i) => { if (/^📎/u.test(l)) lastMarker = i; });
+  if (lastMarker === -1) return null; // «нет маркеров» ловит requireLinkedSources
+  const tail = lines.slice(lastMarker + 1).filter(l => !/https?:\/\//.test(l));
+  return tail.length === 0 ? 'Missing conclusion after last source line' : null;
 };
+
+const noListBullets: Rule = (t) =>
+  t.split('\n').some(l => /^\s*[-*]\s/.test(l))
+    ? 'Contains list bullets (- or *), use 📎 lines instead'
+    : null;
 
 export const validateShort = compose(
   requireDisclaimer,
@@ -175,12 +212,18 @@ export const validateShort = compose(
   requireChicken,
   noEmDash,
   noMarkdown,
+  noListBullets,
   maxLength(1500),           // короткий формат, тюнится
-  requireLinkedSources(3),   // ≥3 строк, где есть и 📎, и http(s)-ссылка
+  requireLinkedSources(3),   // ≥3 строк «📎 ... http(s)» (нижняя граница selectTopics)
+  requireConclusion,         // есть вывод после последней 📎-строки
 );
 ```
 `chickenDistance` **не включаю** — короткий пост, 🐤 в шапке достаточно; правило
 дистанции рассчитано на длинные посты. `maxLength(1500)` — стартовое значение.
+
+Точное соответствие «буллет на каждую тему» (`linked === topics.length`) проверяется
+в `collectErrors` (§2), т.к. там известен `selectedTopics`. `validateShort` отвечает
+только за нижнюю границу и структуру.
 
 ### 5. Превью и публикация — `kesha-boss-background.mts`
 
@@ -205,14 +248,34 @@ type PendingDigest =
 
 **Защита от устаревших кнопок (P1).** Сейчас `digest_prod` глобален: старая кнопка
 опубликует то, что лежит в `pending-digest` СЕЙЧАС. Добавляю `id` (UUID) в pending и в
-callback_data:
+callback_data. `handleDigestCallback` разбирает callback строгим regex и проверяет id:
+```ts
+const m = data.match(/^digest_(prod|cancel):(.+)$/);
+if (!m) { await answerCallbackQuery(callbackQueryId); return; } // malformed → no-op
+const [, action, id] = m;
+```
 - кнопки: `digest_prod:${id}`, `digest_cancel:${id}`.
-- `handleDigestCallback` парсит `id`, грузит `pending-digest`, и если `pending.id !== id`
-  → отвечает «⏰ Дайджест устарел — запусти /digest снова», ничего не публикует.
+- если `pending.id !== id` → «⏰ Дайджест устарел — запусти /digest снова», без публикации.
+- malformed (`digest_prod` без id, `digest_prod:`, `digest_x:${id}`) не матчатся regex →
+  тихий no-op (P2).
+
+**Проверка владельца клика (P1).** Кнопку может нажать не только босс, если превью
+оказалось в не-приватном чате. Перед публикацией/отменой `handleDigestCallback`
+проверяет ДВА условия (отдельно от stale-id):
+```ts
+const fromId = callbackQuery.from.id;
+const cbChatId = String(callbackQuery.message?.chat.id ?? '');
+if (!config.allowed_user_ids.includes(fromId) || pending.chatId !== cbChatId) {
+  await answerCallbackQuery(callbackQueryId, 'Только для начальника 🐤');
+  return; // чужой клик — ничего не публикуем
+}
+```
+`from.id` — только босс; `pending.chatId === cbChatId` — клик в том же чате, где
+создано превью.
 
 Это сохраняет singleton-guard «уже есть незавершённый» (ключ blob по-прежнему один,
-`pending-digest`) и одновременно закрывает гонку со старой кнопкой. Изменение
-затрагивает и full, и short — оба становятся надёжнее.
+`pending-digest`) и одновременно закрывает: гонку со старой кнопкой, malformed callback,
+чужой клик. Изменение затрагивает и full, и short — оба становятся надёжнее.
 
 **Логика публикации в `handleDigestCallback`** ветвится по `pending.variant`:
 - `appendMemory(selectedTopics)` — **всегда** (оба варианта), чтобы темы короткого
@@ -236,7 +299,11 @@ export async function selectTopicsForContexts(
 }
 ```
 `short-digest.ts` зовёт `selectTopicsForContexts` — без доступа к `PipelineConfig`.
-`reviewPostTool` экспортируется как есть (тип уже публичный).
+
+**Нейтральное имя tool (P3).** `reviewPostTool` переименовывается в `reviewResultTool`
+при экспорте, чтобы короткий модуль не импортировал full-post терминологию (схема
+`verdict + notes` общая для обоих). Единственное использование внутри `pipeline.ts`
+(`reviewPost`) обновляется на новое имя.
 
 ### 7. Конфиг моделей — `src/config/pipeline.json` (P2)
 
@@ -244,12 +311,14 @@ export async function selectTopicsForContexts(
 хардкодим в `short-digest.ts`). Новый блок `short_digest`:
 ```jsonc
 "short_digest": {
-  "generate": { "model": "claude-sonnet-4-6",        "temperature": 0.8, "max_tokens": 2048 },
-  "review":   { "model": "claude-haiku-4-5-20251001", "temperature": 0.3, "max_tokens": 1024 },
-  "rewrite":  { "model": "claude-sonnet-4-6",         "temperature": 0.7, "max_tokens": 2048 },
-  "fix":      { "model": "claude-haiku-4-5-20251001", "temperature": 0.1, "max_tokens": 2048 }
+  "generate": { "model": "claude-sonnet-4-6",        "temperature": 0.8, "max_tokens": 2048, "tools": [] },
+  "review":   { "model": "claude-haiku-4-5-20251001", "temperature": 0.3, "max_tokens": 1024, "tools": [] },
+  "rewrite":  { "model": "claude-sonnet-4-6",         "temperature": 0.7, "max_tokens": 2048, "tools": [] },
+  "fix":      { "model": "claude-haiku-4-5-20251001", "temperature": 0.1, "max_tokens": 2048, "tools": [] }
 }
 ```
+Каждый шаг включает `tools: []` — как все существующие step-конфиги в `pipeline.json`
+(P2). TS-тип шага: `{ model: string; temperature: number; max_tokens: number; tools: string[] }`.
 `short-digest.ts` читает `pipeline.json` и маппит snake_case → camelCase при передаче в
 `callClaude` (проектная конвенция).
 
@@ -266,17 +335,25 @@ export async function selectTopicsForContexts(
 
 - **`parseDigestVariant`** (юнит): `/digest`→full, `/digest short`→short,
   `/digest  short` (лишние пробелы)→short, `/digest short extra`→short,
-  `/digest SHORT`→short (регистр), `/digest foo`→full, `/digest@bot short`→short.
-- **Роутинг-регексп** (юнит): `/digestshort` и `/digest_short` НЕ матчатся как digest.
-- **`validateShort`** (юнит): проходит валидный короткий пост; ловит превышение длины,
-  em-dash, markdown, <3 строк с 📎+URL, строку с 📎 но без ссылки, отсутствие
-  дисклеймера/Кеши/🐤.
+  `/digest SHORT`→short (регистр), `/digest foo`→full, `/digest@bot short`→short,
+  `/digestshort`→null, `/digest_short`→null (граница команды внутри парсера, P1/P3).
+- **`countLinkedSources` / `validateShort`** (юнит): проходит валидный короткий пост;
+  ловит превышение длины, em-dash, markdown, дефис-буллеты (`- `/`* `), <3 строк
+  «📎...http», строку где 📎 не в начале или без ссылки, отсутствие вывода после
+  последней 📎-строки, отсутствие дисклеймера/Кеши/🐤.
 - **`generateShortDigest`** (интеграционный, замоканный Claude как в `pipeline.test.ts`):
   вызывает selectTopics → generate → review; отдаёт post при success; прогоняет fix-луп
   при hallucinated URL; в результате есть `hnContext`/`webContext`.
-- **Публикация в callback (P2 — самый рисковый путь):** при `variant: 'short'` —
-  `appendMemory` вызван, `previous-intros` НЕ записан; при `variant: 'full'` — вызваны
-  оба. Плюс: клик по `digest_prod:${staleId}` при другом активном pending → не публикует.
+  **Mismatch количества (P1):** при 5 отобранных темах и посте с 4 буллетами
+  `collectErrors` возвращает ошибку «Expected 5 … found 4» и идёт в fix.
+- **Публикация в callback (самый рисковый путь):**
+  - `variant: 'short'` → `appendMemory` вызван, `previous-intros` НЕ записан;
+    `variant: 'full'` → вызваны оба.
+  - stale id: `digest_prod:${staleId}` при другом активном pending → не публикует.
+  - malformed (P2): `digest_prod` без id, `digest_prod:`, `digest_cancel:wrong`,
+    `digest_x:${id}` → no-op, без публикации.
+  - чужой клик (P1): `from.id` не из `allowed_user_ids`, либо `pending.chatId` ≠ chatId
+    клика → не публикует, отвечает «только для начальника».
 
 ## Что НЕ делаем (YAGNI)
 
