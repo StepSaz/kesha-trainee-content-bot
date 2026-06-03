@@ -63,15 +63,19 @@
 проверяется ВНУТРИ парсера, а сам он возвращает `null` для не-digest команд:
 ```ts
 export function parseDigestVariant(text: string): 'full' | 'short' | null {
-  const m = text.match(/^\/digest(@\w+)?(?:\s+(.*))?$/i);
-  if (!m) return null;  // /digestshort, /digest_x → НЕ команда digest
-  const firstToken = (m[2] ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+  // (?=$|\s) — граница после команды: отвергает /digestshort, /digest_x.
+  const m = text.match(/^\/digest(@\w+)?(?=$|\s)/i);
+  if (!m) return null;  // не команда digest
+  // Аргументы берём ТОЛЬКО из первой строки (newline не считается разделителем).
+  const firstToken = text.slice(m[0].length).split('\n')[0].trim()
+    .split(/\s+/)[0]?.toLowerCase() ?? '';
   return firstToken === 'short' ? 'short' : 'full';
 }
 ```
 Поведение: `/digest`→full, `/digest short`→short, `/digest short extra`→short (первый
 токен), `/digest foo`→full, `/digest SHORT`→short (регистр), `/digestshort`→null,
-`/digest_short`→null. Функция в `src/lib/boss-command-parser.ts` рядом с `parseCommand`.
+`/digest_short`→null, `/digest\nshort`→full (аргументы только из первой строки, P3).
+Функция в `src/lib/boss-command-parser.ts` рядом с `parseCommand`.
 
 **Роутинг** перестаёт дублировать regex — просто зовёт парсер:
 ```ts
@@ -118,13 +122,14 @@ export interface ShortDigestResult {
   с тем же `excludeUrls` из памяти).
 - **`selectTopicsForContexts`** — новый чистый экспорт-обёртка из `pipeline.js`
   (см. §6 ниже). Не утекает приватный `PipelineConfig` в новый модуль.
-- `reviewPostTool` — экспортируется из `pipeline.js` (схема `verdict + notes` общая).
+- `reviewResultTool` — экспортируется из `pipeline.js` (схема `verdict + notes` общая;
+  это переименованный `reviewPostTool`, см. §6).
 - `findHallucinated` из `url-checker.js` для проверки URL.
 - `callClaude`, `callClaudeStructured` из `claude.js`.
 
 Своё (свои промпты + свой config-блок, см. §7):
 - `generateShortPost(...)` — системный промпт `kesha-short.txt`.
-- `reviewShortPost(...)` — системный промпт `kesha-short-reviewer.txt`, через `reviewPostTool`.
+- `reviewShortPost(...)` — системный промпт `kesha-short-reviewer.txt`, через `reviewResultTool`.
 - `rewriteShortPost(...)` — `kesha-short.txt` + фидбек ревьюера.
 - `fixShortPost(...)` — `kesha-short.txt` + список ошибок (как `fixPost`).
 
@@ -165,7 +170,7 @@ Fix-луп копирует паттерн `generatePipelinePost`. `collectError
   - Ссылки берутся ТОЛЬКО из предоставленного контекста, не выдумываются.
 - **`kesha-short-reviewer.txt`** — механический ревьюер: буллеты однострочные, у каждого
   есть ссылка, вывод присутствует, нет воды и пересказа поста. Возвращает `verdict` +
-  `notes` через `reviewPostTool`.
+  `notes` через `reviewResultTool`.
 
 ### 4. Валидатор — `src/lib/validator.ts`
 
@@ -177,11 +182,11 @@ Fix-луп копирует паттерн `generatePipelinePost`. `collectError
 ```ts
 const LINKED_SOURCE_LINE = /^📎\s+\S.*https?:\/\/\S+/u; // 📎 в начале строки + текст + URL
 export function countLinkedSources(t: string): number {
-  return t.split('\n').filter(l => LINKED_SOURCE_LINE.test(l.trim())).length;
+  return t.split('\n').filter(l => LINKED_SOURCE_LINE.test(l)).length; // без trim — 📎 строго первый символ
 }
 ```
-Regex по началу строки (P2) — не «📎 и http где-то в строке», а именно `📎` первым
-символом, затем текст новости, затем URL.
+Regex по началу строки (P2/P3) — не «📎 и http где-то в строке», а именно `📎` ПЕРВЫМ
+символом строки (без `trim`, leading-пробелы не засчитываются), затем текст, затем URL.
 
 **Новые правила.** Вывод (P2): после последней `📎`-строки должна быть хотя бы одна
 непустая строка без URL — это и есть вывод. Иначе reviewer мог дать `ok` посту из шапки
@@ -202,8 +207,8 @@ const requireConclusion: Rule = (t) => {
 };
 
 const noListBullets: Rule = (t) =>
-  t.split('\n').some(l => /^\s*[-*]\s/.test(l))
-    ? 'Contains list bullets (- or *), use 📎 lines instead'
+  t.split('\n').some(l => /^\s*[-*•]\s/.test(l))
+    ? 'Contains list bullets (-, * or •), use 📎 lines instead'
     : null;
 
 export const validateShort = compose(
@@ -350,8 +355,10 @@ export async function selectTopicsForContexts(
   - `variant: 'short'` → `appendMemory` вызван, `previous-intros` НЕ записан;
     `variant: 'full'` → вызваны оба.
   - stale id: `digest_prod:${staleId}` при другом активном pending → не публикует.
-  - malformed (P2): `digest_prod` без id, `digest_prod:`, `digest_cancel:wrong`,
-    `digest_x:${id}` → no-op, без публикации.
+  - malformed (P2), НЕ матчатся `^digest_(prod|cancel):(.+)$` → no-op: `digest_prod`
+    без id, `digest_prod:`, `digest_cancel:`, `digest_x:${id}`.
+    (`digest_cancel:wrong` — это валидный callback со stale id, попадает в ветку
+    «дайджест устарел», а не в no-op.)
   - чужой клик (P1): `from.id` не из `allowed_user_ids`, либо `pending.chatId` ≠ chatId
     клика → не публикует, отвечает «только для начальника».
 
