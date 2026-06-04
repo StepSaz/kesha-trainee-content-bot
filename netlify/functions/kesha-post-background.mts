@@ -6,6 +6,7 @@ import { appendPublishedPost } from '../../src/lib/recent-posts.js';
 import { generateManagedPost } from '../../src/lib/managed-agent.js';
 import { sendToChannel } from '../../src/lib/telegram.js';
 import { shouldSuppressCron } from '../../src/lib/cron-guard.js';
+import { generateShortDigest } from '../../src/lib/short-digest.js';
 
 export default async (): Promise<Response> => {
   if (process.env.KESHA_ENABLED !== 'true') {
@@ -20,7 +21,8 @@ export default async (): Promise<Response> => {
     : process.env.TELEGRAM_CHAT_ID;
 
   const mode = process.env.KESHA_MODE ?? 'pipeline';
-  console.log(`[kesha-post] mode=${mode} channel=${cronChannel}`);
+  const digestFormat = process.env.KESHA_DIGEST_FORMAT ?? 'full';
+  console.log(`[kesha-post] mode=${mode} format=${digestFormat} channel=${cronChannel}`);
 
   const store = getStore('kesha');
 
@@ -40,6 +42,7 @@ export default async (): Promise<Response> => {
     startedAt: new Date().toISOString(),
     trigger: 'cron',
     mode,
+    format: digestFormat,
     channel: cronChannel,
   });
 
@@ -50,6 +53,7 @@ export default async (): Promise<Response> => {
   try {
     async function run() {
       if (mode === 'managed') return generateManagedPost();
+      if (digestFormat === 'short') return generateShortDigest({ memoryEntries });
       return generatePipelinePost(pipelineOptions);
     }
 
@@ -129,9 +133,12 @@ export default async (): Promise<Response> => {
       }));
       await appendMemory(newEntries);
 
-      const newIntro = extractIntro(result.post!);
-      const newIntros = [...previousIntros, newIntro].slice(-10);
-      await store.setJSON('previous-intros', newIntros);
+      // Short digest has no ~ ~ ~ intro — only the full digest updates intro anti-repetition.
+      if (digestFormat !== 'short') {
+        const newIntro = extractIntro(result.post!);
+        const newIntros = [...previousIntros, newIntro].slice(-10);
+        await store.setJSON('previous-intros', newIntros);
+      }
     }
 
     return new Response('ok', { status: 200 });
