@@ -795,7 +795,7 @@ async function handleDmChat(message: TelegramMessage): Promise<void> {
     `Сегодня ${today}. Твоё внутреннее знание устарело — для любых фактов о текущем мире доверяй блоку "СВЕЖИЙ ВЕБ-ПОИСК" в сообщении пользователя выше своих знаний.`,
     'Архитектура: serverless background function на Netlify.',
     'Посты по четвергам в 16:00 Варшавы генеришь через Claude Sonnet с managed agent и web search.',
-    'Команды босса: /digest (сгенерить пост), /digest short (короткий дайджест одной строкой на тему), /boss (обработать готовый текст), /notes (пост из .md).',
+    'Команды босса: /digest (полный пост), /short (короткий дайджест одной строкой на тему, то же что /digest short), /boss (обработать готовый текст), /notes (пост из .md).',
     'В комментах канала отвечаешь читателям через Claude Haiku.',
     'В личке тоже на Haiku — дешевле, и для болтовни хватает. На каждое сообщение система автоматически дёргает Tavily и кладёт результаты в блок "СВЕЖИЙ ВЕБ-ПОИСК".',
     'Если блок есть — используй его как первоисточник, ссылайся на URL по делу. Если блока нет или он пустой — честно скажи, что свежей инфы под рукой нет, не выдумывай актуальные факты.',
@@ -858,6 +858,10 @@ export default async (req: Request): Promise<Response> => {
     }
   } else if (msg && digestVariant) {
     await handleDigest(msg, digestVariant);
+  } else if (msg?.text?.match(/^\/short(@\w+)?(\s|$)/i)) {
+    // Standalone clickable alias for the short digest (Telegram menu can't show
+    // the "/digest short" argument form). Same behaviour as /digest short.
+    await handleDigest(msg, 'short');
   } else if (msg?.text?.match(/^\/boss/)) {
     await handleCommand(msg);
   } else if (msg?.caption?.startsWith('/notes') && msg.document) {

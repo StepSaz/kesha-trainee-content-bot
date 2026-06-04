@@ -37,7 +37,8 @@ async function main() {
     body: JSON.stringify({
       commands: [
         { command: 'boss', description: 'Опубликовать пост (только для начальника)' },
-        { command: 'digest', description: 'Сгенерировать дайджест' },
+        { command: 'digest', description: 'Сгенерировать полный дайджест' },
+        { command: 'short', description: 'Короткий дайджест — новости одной строкой' },
         { command: 'notes', description: 'Пост из митинг нотсов / стрима' },
       ],
     }),
