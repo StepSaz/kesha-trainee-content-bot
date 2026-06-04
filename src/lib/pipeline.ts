@@ -116,7 +116,7 @@ const selectTopicsTool: ToolDef = {
   },
 };
 
-const reviewPostTool: ToolDef = {
+export const reviewResultTool: ToolDef = {
   name: 'review_post',
   description: 'Return the mechanical review verdict for a Kesha post.',
   input_schema: {
@@ -371,7 +371,7 @@ async function reviewPost(draft: string, cfg: PipelineConfig): Promise<ReviewRes
     model: cfg.steps.review.model,
     temperature: cfg.steps.review.temperature,
     maxTokens: cfg.steps.review.max_tokens,
-    tool: reviewPostTool,
+    tool: reviewResultTool,
   });
 }
 
@@ -529,4 +529,15 @@ export async function generatePipelinePost(options: PipelineOptions = {}): Promi
       timing,
     };
   }
+}
+
+// Public wrapper: select topics from already-gathered contexts. Reads pipeline.json
+// internally so callers (e.g. short-digest) don't depend on the private PipelineConfig.
+export async function selectTopicsForContexts(
+  hnContext: string,
+  webContext: string,
+  memoryEntries?: MemoryEntry[],
+): Promise<SelectedTopics> {
+  const cfg = JSON.parse(readConfig('pipeline.json')) as PipelineConfig;
+  return selectTopics(hnContext, webContext, cfg, memoryEntries);
 }

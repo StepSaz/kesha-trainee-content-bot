@@ -15,7 +15,7 @@ vi.mock('../memory.js', () => ({
   findCallbacks: vi.fn().mockReturnValue([]),
 }));
 
-import { generatePipelinePost, extractIntro, type SelectedTopics, type ReviewResult, type TopicExperience } from '../pipeline.js';
+import { generatePipelinePost, extractIntro, selectTopicsForContexts, type SelectedTopics, type ReviewResult, type TopicExperience } from '../pipeline.js';
 import { callClaude, callClaudeStructured } from '../claude.js';
 import { fetchHackerNewsContext, fetchLightWebSearch } from '../sources.js';
 import { validatePost } from '../validator.js';
@@ -552,5 +552,29 @@ describe('extractIntro', () => {
 
   it('returns empty string when separator is at position 0', () => {
     expect(extractIntro('~ ~ ~\n\nRest of post')).toBe('');
+  });
+});
+
+describe('selectTopicsForContexts', () => {
+  it('selects topics from contexts and reads config internally', async () => {
+    const topics = okTopics(2);
+    mockCallClaudeStructured.mockResolvedValueOnce(topics);
+
+    const result = await selectTopicsForContexts('HN context', 'WEB context', []);
+
+    expect(result).toEqual(topics);
+    expect(mockCallClaudeStructured).toHaveBeenCalledTimes(1);
+    const callParams = mockCallClaudeStructured.mock.calls[0][0];
+    expect(callParams.userMessage).toContain('HN context');
+    expect(callParams.userMessage).toContain('WEB context');
+  });
+
+  it('injects dedup block when memoryEntries provided', async () => {
+    mockCallClaudeStructured.mockResolvedValueOnce(okTopics(2));
+    await selectTopicsForContexts('HN', 'WEB', [
+      { url: 'https://example.com/x', title: 'OldTopic Z', publishedAt: new Date().toISOString(), postId: null },
+    ]);
+    const callParams = mockCallClaudeStructured.mock.calls[0][0];
+    expect(callParams.systemPrompt).toContain('OldTopic Z');
   });
 });
