@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCommand } from '../boss-command-parser.js';
+import { parseCommand, parseDigestVariant } from '../boss-command-parser.js';
 
 describe('parseCommand', () => {
   it('extracts plain text without flags', () => {
@@ -36,5 +36,38 @@ describe('parseCommand', () => {
 
   it('returns empty inputText for bare /boss command', () => {
     expect(parseCommand('/boss')).toEqual({ forceRaw: false, forceSkip: false, inputText: '' });
+  });
+});
+
+describe('parseDigestVariant', () => {
+  it('returns full for bare /digest', () => {
+    expect(parseDigestVariant('/digest')).toBe('full');
+  });
+  it('returns short for /digest short', () => {
+    expect(parseDigestVariant('/digest short')).toBe('short');
+  });
+  it('returns short ignoring extra args after short', () => {
+    expect(parseDigestVariant('/digest short extra')).toBe('short');
+  });
+  it('tolerates extra spaces before short', () => {
+    expect(parseDigestVariant('/digest   short')).toBe('short');
+  });
+  it('is case-insensitive on the variant arg', () => {
+    expect(parseDigestVariant('/digest SHORT')).toBe('short');
+  });
+  it('returns full for unknown args', () => {
+    expect(parseDigestVariant('/digest foo')).toBe('full');
+  });
+  it('handles /digest@bot short (Telegram group syntax)', () => {
+    expect(parseDigestVariant('/digest@psyreqbot short')).toBe('short');
+  });
+  it('returns full when args are on a second line (first line only)', () => {
+    expect(parseDigestVariant('/digest\nshort')).toBe('full');
+  });
+  it('returns null for non-digest commands (no command boundary)', () => {
+    expect(parseDigestVariant('/digestshort')).toBeNull();
+    expect(parseDigestVariant('/digest_short')).toBeNull();
+    expect(parseDigestVariant('/boss text')).toBeNull();
+    expect(parseDigestVariant('просто текст')).toBeNull();
   });
 });

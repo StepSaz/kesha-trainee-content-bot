@@ -9,3 +9,14 @@ export function parseCommand(text: string): { forceRaw: boolean; forceSkip: bool
   }
   return { forceRaw: false, forceSkip: false, inputText: withoutCommand.trim() };
 }
+
+export function parseDigestVariant(text: string): 'full' | 'short' | null {
+  // (?=$|\s) enforces a command boundary so /digestshort and /digest_x are NOT
+  // treated as digest commands. /digest@bot is allowed (Telegram group syntax).
+  const m = text.match(/^\/digest(@\w+)?(?=$|\s)/i);
+  if (!m) return null;
+  // Arguments are read from the first line only (newline is not an arg separator).
+  const firstToken = text.slice(m[0].length).split('\n')[0].trim()
+    .split(/\s+/)[0]?.toLowerCase() ?? '';
+  return firstToken === 'short' ? 'short' : 'full';
+}
