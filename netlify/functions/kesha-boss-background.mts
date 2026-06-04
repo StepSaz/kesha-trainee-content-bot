@@ -3,7 +3,7 @@ import { getStore } from '@netlify/blobs';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { runBossPipeline } from '../../src/lib/boss-pipeline.js';
-import { parseCommand } from '../../src/lib/boss-command-parser.js';
+import { parseCommand, parseDigestVariant } from '../../src/lib/boss-command-parser.js';
 import {
   sendToChannel,
   sendMessage,
@@ -12,6 +12,7 @@ import {
   type InlineKeyboard,
 } from '../../src/lib/telegram.js';
 import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
+import { generateShortDigest } from '../../src/lib/short-digest.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
 import { callClaude, callClaudeWithTools, type ConversationTurn } from '../../src/lib/claude.js';
 import { COMMENT_TOOLS, makeExecuteTool } from '../../src/lib/comment-tools.js';
@@ -108,14 +109,18 @@ interface PendingPreview {
   createdAt: string;
 }
 
-interface PendingDigest {
+interface PendingDigestBase {
+  id: string;
+  variant: 'full' | 'short';
   chatId: string;
   progressMessageId: number;
   post: string;
   selectedTopics: PipelineResult['selectedTopics'];
-  newIntros: string[];
   createdAt: string;
 }
+type PendingDigest =
+  | (PendingDigestBase & { variant: 'full'; newIntros: string[] })
+  | (PendingDigestBase & { variant: 'short' });
 
 function readBossConfig(): BossConfig {
   const raw = readFileSync(join(process.cwd(), 'src/config/pipeline.json'), 'utf-8');
@@ -276,7 +281,7 @@ async function handleCallback(callbackQuery: TelegramCallbackQuery): Promise<voi
   }
 }
 
-async function handleDigest(message: TelegramMessage): Promise<void> {
+async function handleDigest(message: TelegramMessage, variant: 'full' | 'short'): Promise<void> {
   const chatId = String(message.chat.id);
   const config = readBossConfig();
 
@@ -293,85 +298,119 @@ async function handleDigest(message: TelegramMessage): Promise<void> {
     return;
   }
 
-  const progressResult = await sendMessage(chatId, '⏳ генерирую дайджест... (~60-90 сек)');
+  const label = variant === 'short' ? 'короткий дайджест' : 'дайджест';
+  const progressResult = await sendMessage(chatId, `⏳ генерирую ${label}... (~60-90 сек)`);
   if (!progressResult.success || !progressResult.messageId) return;
   const progressMessageId = progressResult.messageId;
 
   try {
     const memoryEntries = await loadMemory();
-    const previousIntros = (await store.get('previous-intros', { type: 'json' }) as string[] | null) ?? [];
 
-    const result = await generatePipelinePost({ memoryEntries, previousIntros });
+    let pending: PendingDigest;
+    let post: string;
 
-    if (!result.success || !result.post) {
-      await editMessageText(chatId, progressMessageId,
-        `❌ Пайплайн упал: ${(result.errors ?? []).join(', ')}`);
-      return;
+    if (variant === 'short') {
+      const result = await generateShortDigest({ memoryEntries });
+      if (!result.success || !result.post) {
+        await editMessageText(chatId, progressMessageId, `❌ Пайплайн упал: ${(result.errors ?? []).join(', ')}`);
+        return;
+      }
+      post = result.post;
+      pending = {
+        id: crypto.randomUUID(),
+        variant: 'short',
+        chatId,
+        progressMessageId,
+        post,
+        selectedTopics: result.selectedTopics,
+        createdAt: new Date().toISOString(),
+      };
+    } else {
+      const previousIntros = (await store.get('previous-intros', { type: 'json' }) as string[] | null) ?? [];
+      const result = await generatePipelinePost({ memoryEntries, previousIntros });
+      if (!result.success || !result.post) {
+        await editMessageText(chatId, progressMessageId, `❌ Пайплайн упал: ${(result.errors ?? []).join(', ')}`);
+        return;
+      }
+      post = result.post;
+      const newIntro = extractIntro(result.post);
+      pending = {
+        id: crypto.randomUUID(),
+        variant: 'full',
+        chatId,
+        progressMessageId,
+        post,
+        selectedTopics: result.selectedTopics,
+        newIntros: [...previousIntros, newIntro].slice(-10),
+        createdAt: new Date().toISOString(),
+      };
     }
 
-    const newIntro = extractIntro(result.post);
-    const newIntros = [...previousIntros, newIntro].slice(-10);
-
-    const pending: PendingDigest = {
-      chatId,
-      progressMessageId,
-      post: result.post,
-      selectedTopics: result.selectedTopics,
-      newIntros,
-      createdAt: new Date().toISOString(),
-    };
     await store.setJSON('pending-digest', pending);
 
     const keyboard: InlineKeyboard = {
       inline_keyboard: [[
-        { text: '✅ Опубликовать', callback_data: 'digest_prod' },
-        { text: '❌ Отмена', callback_data: 'digest_cancel' },
+        { text: '✅ Опубликовать', callback_data: `digest_prod:${pending.id}` },
+        { text: '❌ Отмена', callback_data: `digest_cancel:${pending.id}` },
       ]],
     };
 
-    await editMessageText(chatId, progressMessageId, '✅ Готово, пост ниже - подтверди публикацию:');
-    await sendMessage(chatId, result.post, { replyMarkup: keyboard });
+    const readyMsg = variant === 'short' ? '✅ Готово, короткий пост ниже - подтверди публикацию:' : '✅ Готово, пост ниже - подтверди публикацию:';
+    await editMessageText(chatId, progressMessageId, readyMsg);
+    await sendMessage(chatId, post, { replyMarkup: keyboard });
   } catch (err) {
     await editMessageText(chatId, progressMessageId, `❌ Ошибка: ${String(err)}`);
   }
 }
 
-async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promise<void> {
+export async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promise<void> {
   const callbackQueryId = callbackQuery.id;
   const chatId = String(callbackQuery.message?.chat.id ?? '');
   const messageId = callbackQuery.message?.message_id ?? 0;
   const data = callbackQuery.data ?? '';
 
+  // Strict parse: malformed callbacks (digest_prod, digest_prod:, digest_x:id) → no-op.
+  const m = data.match(/^digest_(prod|cancel):(.+)$/);
+  if (!m) {
+    await answerCallbackQuery(callbackQueryId);
+    return;
+  }
+  const action = m[1];
+  const id = m[2];
+
   const store = getStore('kesha');
   const pending = await store.get('pending-digest', { type: 'json' }) as PendingDigest | null;
 
-  if (!pending) {
+  // Stale button: no pending, or its id no longer matches this button.
+  if (!pending || pending.id !== id) {
     await answerCallbackQuery(callbackQueryId);
     await editMessageText(chatId, messageId, '⏰ Дайджест устарел — запусти /digest снова.', { replyMarkup: null });
     return;
   }
 
-  if (data === 'digest_cancel') {
+  // Ownership: only the boss, and only in the chat where the preview was created.
+  const config = readBossConfig();
+  if (!config.allowed_user_ids.includes(callbackQuery.from.id) || pending.chatId !== chatId) {
+    await answerCallbackQuery(callbackQueryId, 'Только для начальника 🐤');
+    return;
+  }
+
+  if (action === 'cancel') {
     await store.delete('pending-digest');
     await answerCallbackQuery(callbackQueryId, 'Публикация отменена');
     await editMessageText(chatId, messageId, '❌ Отменено.', { replyMarkup: null });
     return;
   }
 
-  if (data !== 'digest_prod') {
-    await answerCallbackQuery(callbackQueryId);
-    return;
-  }
+  // action === 'prod'
   const targetChatId = process.env.TELEGRAM_CHAT_ID!;
-
-  // Delete first — prevents double-click and ensures cleanup even if sendToChannel throws
+  // Delete first — prevents double-click and ensures cleanup even if sendToChannel throws.
   await store.delete('pending-digest');
   const sendResult = await sendToChannel(pending.post, targetChatId);
   await answerCallbackQuery(callbackQueryId);
 
   if (!sendResult.success) {
-    await editMessageText(chatId, messageId,
-      `❌ Ошибка отправки: ${sendResult.error}`, { replyMarkup: null });
+    await editMessageText(chatId, messageId, `❌ Ошибка отправки: ${sendResult.error}`, { replyMarkup: null });
     return;
   }
 
@@ -379,20 +418,22 @@ async function handleDigestCallback(callbackQuery: TelegramCallbackQuery): Promi
 
   try {
     await store.setJSON('digest-last-manual-at', { publishedAt: new Date().toISOString() });
-    const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map(t => ({
+    const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map((t) => ({
       url: t.sourceUrl,
       title: t.title,
       publishedAt: new Date().toISOString(),
       postId: sendResult.messageId ?? null,
     }));
     await appendMemory(newEntries);
-    await store.setJSON('previous-intros', pending.newIntros);
+    // previous-intros only applies to the full digest (short has no ~ ~ ~ intro).
+    if (pending.variant === 'full') {
+      await store.setJSON('previous-intros', pending.newIntros);
+    }
   } catch (err) {
     console.error('[boss] memory update failed after publish:', err);
   }
 
-  await editMessageText(chatId, messageId,
-    `✅ Отправлено в канал: t.me/psyreq/${sendResult.messageId}`, { replyMarkup: null });
+  await editMessageText(chatId, messageId, `✅ Отправлено в канал: t.me/psyreq/${sendResult.messageId}`, { replyMarkup: null });
 }
 
 async function handleCommentReply(message: TelegramMessage): Promise<void> {
@@ -752,7 +793,7 @@ async function handleDmChat(message: TelegramMessage): Promise<void> {
     `Сегодня ${today}. Твоё внутреннее знание устарело — для любых фактов о текущем мире доверяй блоку "СВЕЖИЙ ВЕБ-ПОИСК" в сообщении пользователя выше своих знаний.`,
     'Архитектура: serverless background function на Netlify.',
     'Посты по четвергам в 16:00 Варшавы генеришь через Claude Sonnet с managed agent и web search.',
-    'Команды босса: /digest (сгенерить пост), /boss (обработать готовый текст), /notes (пост из .md).',
+    'Команды босса: /digest (сгенерить пост), /digest short (короткий дайджест одной строкой на тему), /boss (обработать готовый текст), /notes (пост из .md).',
     'В комментах канала отвечаешь читателям через Claude Haiku.',
     'В личке тоже на Haiku — дешевле, и для болтовни хватает. На каждое сообщение система автоматически дёргает Tavily и кладёт результаты в блок "СВЕЖИЙ ВЕБ-ПОИСК".',
     'Если блок есть — используй его как первоисточник, ссылайся на URL по делу. Если блока нет или он пустой — честно скажи, что свежей инфы под рукой нет, не выдумывай актуальные факты.',
@@ -804,6 +845,7 @@ export default async (req: Request): Promise<Response> => {
   // We await here so the function keeps running until handlers complete (up to 15 min).
   const msg = update.message;
   const cq = update.callback_query;
+  const digestVariant = msg ? parseDigestVariant(msg.text ?? '') : null;
 
   if (cq) {
     const data = cq.data ?? '';
@@ -812,8 +854,8 @@ export default async (req: Request): Promise<Response> => {
     } else {
       await handleCallback(cq);
     }
-  } else if (msg?.text?.match(/^\/digest/)) {
-    await handleDigest(msg);
+  } else if (msg && digestVariant) {
+    await handleDigest(msg, digestVariant);
   } else if (msg?.text?.match(/^\/boss/)) {
     await handleCommand(msg);
   } else if (msg?.caption?.startsWith('/notes') && msg.document) {
