@@ -41,6 +41,33 @@ const requireSourceMarkers = (min: number): Rule => (t) => {
     : null;
 };
 
+// A linked source line: 📎 as the FIRST character, then text, then an http(s) URL.
+// No trim — 📎 must be literally first (leading spaces do not count).
+const LINKED_SOURCE_LINE = /^📎\s+\S.*https?:\/\/\S+/u;
+
+export function countLinkedSources(t: string): number {
+  return t.split('\n').filter((l) => LINKED_SOURCE_LINE.test(l)).length;
+}
+
+const requireLinkedSources = (min: number): Rule => (t) => {
+  const n = countLinkedSources(t);
+  return n < min ? `Too few linked sources: ${n} 📎+URL line(s) (min ${min})` : null;
+};
+
+const requireConclusion: Rule = (t) => {
+  const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
+  let lastMarker = -1;
+  lines.forEach((l, i) => { if (/^📎/u.test(l)) lastMarker = i; });
+  if (lastMarker === -1) return null; // "no markers" is handled by requireLinkedSources
+  const tail = lines.slice(lastMarker + 1).filter((l) => !/https?:\/\//.test(l));
+  return tail.length === 0 ? 'Missing conclusion after last source line' : null;
+};
+
+const noListBullets: Rule = (t) =>
+  t.split('\n').some((l) => /^\s*[-*•]\s/.test(l))
+    ? 'Contains list bullets (-, * or •), use 📎 lines instead'
+    : null;
+
 function compose(...rules: Rule[]): (text: string) => ValidationResult {
   return (text) => {
     const errors = rules
@@ -85,6 +112,20 @@ export const validateNotes = compose(
   noEmDash,
   noMarkdown,
   maxLength(4000),
+);
+
+// Short digest: 📎-bulleted one-liners with source links + a short conclusion.
+// chickenDistance is intentionally omitted (short post, one 🐤 in header is fine).
+export const validateShort = compose(
+  requireDisclaimer,
+  requireKesha,
+  requireChicken,
+  noEmDash,
+  noMarkdown,
+  noListBullets,
+  maxLength(1500),
+  requireLinkedSources(3),
+  requireConclusion,
 );
 
 // Backward-compat aliases — existing callers keep working.

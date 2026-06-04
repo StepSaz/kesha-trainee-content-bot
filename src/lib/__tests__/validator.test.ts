@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validatePost, validateBossPost } from '../validator.js';
+import { validatePost, validateBossPost, validateShort, countLinkedSources } from '../validator.js';
 
 // 🐤 only on greeting and signature lines; body is long enough so they are ≥500 chars apart.
 const VALID_POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ. Не бейте.
@@ -179,5 +179,71 @@ describe('validateBossPost', () => {
     const text = 'x—y **bold**';
     const result = validateBossPost(text);
     expect(result.errors.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+const VALID_SHORT = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ.
+
+Кеша на проводе🐤 Главное за неделю одной строкой:
+
+📎 Anthropic выпустила Claude Opus 4.8 - новый флагман https://example.com/1
+📎 OpenAI снизила цены на API вдвое https://example.com/2
+📎 Google показал Gemini 3 на конференции https://example.com/3
+
+Вывод: неделя жирная на релизы, выбирай инструмент под задачу.
+
+Ваш стажер-Кеша @st_szs 🐤`;
+
+describe('countLinkedSources', () => {
+  it('counts lines that start with 📎 and contain a URL', () => {
+    expect(countLinkedSources(VALID_SHORT)).toBe(3);
+  });
+  it('does not count a 📎 line without a URL', () => {
+    expect(countLinkedSources('📎 новость без ссылки\n📎 есть https://u/1')).toBe(1);
+  });
+  it('does not count 📎 that is not the first character', () => {
+    expect(countLinkedSources('текст 📎 https://u/1')).toBe(0);
+  });
+  it('does not count a 📎 line with leading spaces (📎 must be first char)', () => {
+    expect(countLinkedSources('   📎 новость https://u/1')).toBe(0);
+  });
+});
+
+describe('validateShort', () => {
+  it('passes a valid short digest', () => {
+    expect(validateShort(VALID_SHORT)).toEqual({ valid: true, errors: [] });
+  });
+  it('fails when fewer than 3 linked sources', () => {
+    const post = VALID_SHORT.replace('📎 Google показал Gemini 3 на конференции https://example.com/3\n', '');
+    const result = validateShort(post);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('linked sources'))).toBe(true);
+  });
+  it('fails when conclusion is missing after the last source line', () => {
+    const post = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ.
+
+Кеша на проводе🐤
+
+📎 a https://example.com/1
+📎 b https://example.com/2
+📎 c https://example.com/3`;
+    const result = validateShort(post);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('conclusion'))).toBe(true);
+  });
+  it('fails on em-dash', () => {
+    expect(validateShort(VALID_SHORT.replace(' - ', ' — ')).valid).toBe(false);
+  });
+  it('fails on list bullets (-, * or •)', () => {
+    const post = VALID_SHORT.replace('📎 Anthropic', '- Anthropic');
+    const result = validateShort(post);
+    expect(result.errors.some(e => e.includes('list bullets'))).toBe(true);
+  });
+  it('fails when too long', () => {
+    const post = VALID_SHORT + '\n' + 'x'.repeat(1600);
+    expect(validateShort(post).errors.some(e => e.includes('too long'))).toBe(true);
+  });
+  it('fails without disclaimer / Кеша / 🐤', () => {
+    expect(validateShort('просто текст со ссылкой https://u/1').valid).toBe(false);
   });
 });
