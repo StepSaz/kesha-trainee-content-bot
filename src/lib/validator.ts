@@ -59,7 +59,8 @@ const requireConclusion: Rule = (t) => {
   let lastMarker = -1;
   lines.forEach((l, i) => { if (/^📎/u.test(l)) lastMarker = i; });
   if (lastMarker === -1) return null; // "no markers" is handled by requireLinkedSources
-  const tail = lines.slice(lastMarker + 1).filter((l) => !/https?:\/\//.test(l));
+  // A conclusion is a real (prose) line after the sources — not just a trailing bare URL.
+  const tail = lines.slice(lastMarker + 1).filter((l) => !/^https?:\/\/\S+$/.test(l));
   return tail.length === 0 ? 'Missing conclusion after last source line' : null;
 };
 

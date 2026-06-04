@@ -246,4 +246,32 @@ describe('validateShort', () => {
   it('fails without disclaimer / Кеша / 🐤', () => {
     expect(validateShort('просто текст со ссылкой https://u/1').valid).toBe(false);
   });
+
+  it('passes when the conclusion line embeds a URL', () => {
+    const post = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ.
+
+Кеша на проводе🐤 Главное за неделю одной строкой:
+
+📎 Anthropic выпустила Claude Opus 4.8 https://example.com/1
+📎 OpenAI снизила цены на API https://example.com/2
+📎 Google показал Gemini 3 https://example.com/3
+
+Вывод: ставлю на Opus, детали тут https://example.com/recap`;
+    const result = validateShort(post);
+    expect(result.errors.some((e) => e.includes('conclusion'))).toBe(false);
+    expect(result.valid).toBe(true);
+  });
+
+  it('still fails when only a bare URL line follows the sources', () => {
+    const post = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ.
+
+Кеша на проводе🐤
+
+📎 a https://example.com/1
+📎 b https://example.com/2
+📎 c https://example.com/3
+https://example.com/extra`;
+    const result = validateShort(post);
+    expect(result.errors.some((e) => e.includes('conclusion'))).toBe(true);
+  });
 });
