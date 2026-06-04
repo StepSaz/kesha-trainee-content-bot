@@ -364,8 +364,6 @@ export async function selectTopicsForContexts(
 
 ## Что НЕ делаем (YAGNI)
 
-- Не трогаем cron — короткий дайджест только по ручной команде.
-- Не делаем выбор формата для cron-постинга по четвергам (остаётся полный).
 - Не публикуем оба формата за один запуск.
 - Не добавляем шаг `experience` в короткий флоу.
 
@@ -374,3 +372,27 @@ export async function selectTopicsForContexts(
 - `maxLength` короткого поста (старт 1500).
 - Минимум источников `requireLinkedSources` (старт 3).
 - Точные тексты `kesha-short.txt` и `kesha-short-reviewer.txt` — итерируются на превью.
+
+## Изменения при реализации (deltas)
+
+Уточнения, внесённые в ходе code-review и по запросу владельца — спек отражает их для точности:
+
+1. **`requireConclusion` (валидатор).** Финальный фильтр — НЕ «строка содержит URL», а «строка
+   состоит ТОЛЬКО из голого URL»: `tail = lines.slice(lastMarker+1).filter(l => !/^https?:\/\/\S+$/.test(l))`.
+   Так вывод с встроенной ссылкой («Вывод: детали тут https://...») засчитывается, а голый
+   trailing-URL — нет. Покрыто тестами.
+2. **Промпт ревьюера.** `kesha-short-reviewer.txt` явно требует на 📎-строке текст новости + URL
+   в конце; строка только из 📎 и голого URL — это `rework` (иначе мог бы пройти мимо
+   `requireLinkedSources`, который требует `\S` до URL).
+3. **Подавление cron (Task 6 fix).** `digest-last-manual-at` пишется ТОЛЬКО для `variant === 'full'`.
+   Ручной короткий дайджест НЕ подавляет четверговый full-cron (короткий — это дополнение, не
+   замена). `appendMemory` при этом выполняется для обоих вариантов (темы дедупаются).
+4. **Cron-формат (новый, по запросу владельца — больше НЕ «cron остаётся полным»).**
+   `kesha-post-background.mts` читает `KESHA_DIGEST_FORMAT` (`short`/`full`, дефолт `full`).
+   При `short` cron зовёт `generateShortDigest` вместо `generatePipelinePost` и НЕ обновляет
+   `previous-intros` (у короткого нет интро). `appendMemory` идёт в обоих случаях. Управляется
+   env-переменной — переключение без деплоя. Покрыто юнит-тестом `kesha-post-cron.test.ts`.
+5. **E2E-скрипт.** `scripts/e2e-short-digest.ts` (`npm run e2e:short-digest`) гоняет реальный
+   `generateShortDigest` end-to-end (HN + web → select → generate → review → validate), печатает
+   пост, темы, тайминг и независимый `validateShort`. Не включён в агрегатный `npm run e2e`
+   (дорогой). Требует `ANTHROPIC_API_KEY`.
