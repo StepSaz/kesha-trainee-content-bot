@@ -6,7 +6,7 @@ import { appendPublishedPost } from '../../src/lib/recent-posts.js';
 import { generateManagedPost } from '../../src/lib/managed-agent.js';
 import { sendToChannel } from '../../src/lib/telegram.js';
 import { shouldSuppressCron } from '../../src/lib/cron-guard.js';
-import { generateShortDigest } from '../../src/lib/short-digest.js';
+import { generateShortDigest, extractShortIntro } from '../../src/lib/short-digest.js';
 
 export default async (): Promise<Response> => {
   if (process.env.KESHA_ENABLED !== 'true') {
@@ -48,12 +48,13 @@ export default async (): Promise<Response> => {
 
   const memoryEntries = await loadMemory();
   const previousIntros = (await store.get('previous-intros', { type: 'json' }) as string[] | null) ?? [];
+  const previousShortIntros = (await store.get('previous-short-intros', { type: 'json' }) as string[] | null) ?? [];
   const pipelineOptions: PipelineOptions = { memoryEntries, previousIntros };
 
   try {
     async function run() {
       if (mode === 'managed') return generateManagedPost();
-      if (digestFormat === 'short') return generateShortDigest({ memoryEntries });
+      if (digestFormat === 'short') return generateShortDigest({ memoryEntries, previousIntros: previousShortIntros });
       return generatePipelinePost(pipelineOptions);
     }
 
@@ -133,8 +134,11 @@ export default async (): Promise<Response> => {
       }));
       await appendMemory(newEntries);
 
-      // Short digest has no ~ ~ ~ intro — only the full digest updates intro anti-repetition.
-      if (digestFormat !== 'short') {
+      // Each format keeps its OWN intro anti-repetition list (different greeting shape).
+      if (digestFormat === 'short') {
+        const newShortIntros = [...previousShortIntros, extractShortIntro(result.post!)].slice(-10);
+        await store.setJSON('previous-short-intros', newShortIntros);
+      } else {
         const newIntro = extractIntro(result.post!);
         const newIntros = [...previousIntros, newIntro].slice(-10);
         await store.setJSON('previous-intros', newIntros);

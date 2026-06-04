@@ -12,7 +12,7 @@ vi.mock('../pipeline.js', () => ({
 vi.mock('../validator.js', () => ({ validateShort: vi.fn(), countLinkedSources: vi.fn() }));
 vi.mock('../url-checker.js', () => ({ findHallucinated: vi.fn() }));
 
-import { generateShortDigest } from '../short-digest.js';
+import { generateShortDigest, extractShortIntro } from '../short-digest.js';
 import { callClaude, callClaudeStructured } from '../claude.js';
 import { fetchHackerNewsContext, fetchLightWebSearch } from '../sources.js';
 import { selectTopicsForContexts } from '../pipeline.js';
@@ -125,5 +125,51 @@ describe('generateShortDigest', () => {
 
     expect(result.hnContext).toBe('HN ctx');
     expect(result.webContext).toBe('WEB ctx');
+  });
+
+  it('injects previous intros block into the generate prompt for anti-repetition', async () => {
+    mockCallClaude.mockResolvedValueOnce(SHORT_POST);
+    mockCallClaudeStructured.mockResolvedValueOnce(okReview);
+
+    await generateShortDigest({ previousIntros: ['Кеша на связи, неделя огонь', 'Степан в делах, я на дайджесте'] });
+
+    const generateUserMessage = mockCallClaude.mock.calls[0][0].userMessage as string;
+    expect(generateUserMessage).toContain('ПОСЛЕДНИЕ ТВОИ ВСТУПЛЕНИЯ');
+    expect(generateUserMessage).toContain('Кеша на связи, неделя огонь');
+  });
+
+  it('does not inject intros block when previousIntros is empty/absent', async () => {
+    mockCallClaude.mockResolvedValueOnce(SHORT_POST);
+    mockCallClaudeStructured.mockResolvedValueOnce(okReview);
+
+    await generateShortDigest();
+
+    const generateUserMessage = mockCallClaude.mock.calls[0][0].userMessage as string;
+    expect(generateUserMessage).not.toContain('ПОСЛЕДНИЕ ТВОИ ВСТУПЛЕНИЯ');
+  });
+});
+
+describe('extractShortIntro', () => {
+  const POST = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ.
+
+Кеша на связи 🐤 Неделя вышла громкая, держите выжимку:
+
+📎 Anthropic выпустила Claude Opus 4.8 https://example.com/1
+📎 OpenAI снизила цены https://example.com/2
+📎 Google показал Gemini 3 https://example.com/3
+
+Вывод: жирно. Ваш стажер-Кеша @st_szs 🐤`;
+
+  it('returns the greeting line(s) between the disclaimer and the first 📎 bullet', () => {
+    expect(extractShortIntro(POST)).toBe('Кеша на связи 🐤 Неделя вышла громкая, держите выжимку:');
+  });
+
+  it('drops the mandatory disclaimer line', () => {
+    expect(extractShortIntro(POST)).not.toContain('Я МАЛЕНЬКИЙ БОТ');
+  });
+
+  it('returns empty string when there is no intro before the bullets', () => {
+    const noIntro = `Я МАЛЕНЬКИЙ БОТ, Я ТОЛЬКО УЧУСЬ.\n\n📎 a https://u/1\n\nВывод. 🐤`;
+    expect(extractShortIntro(noIntro)).toBe('');
   });
 });

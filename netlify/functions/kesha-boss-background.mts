@@ -12,7 +12,7 @@ import {
   type InlineKeyboard,
 } from '../../src/lib/telegram.js';
 import { generatePipelinePost, extractIntro, type PipelineResult } from '../../src/lib/pipeline.js';
-import { generateShortDigest } from '../../src/lib/short-digest.js';
+import { generateShortDigest, extractShortIntro } from '../../src/lib/short-digest.js';
 import { loadMemory, appendMemory, type MemoryEntry } from '../../src/lib/memory.js';
 import { callClaude, callClaudeWithTools, type ConversationTurn } from '../../src/lib/claude.js';
 import { COMMENT_TOOLS, makeExecuteTool } from '../../src/lib/comment-tools.js';
@@ -120,7 +120,7 @@ interface PendingDigestBase {
 }
 type PendingDigest =
   | (PendingDigestBase & { variant: 'full'; newIntros: string[] })
-  | (PendingDigestBase & { variant: 'short' });
+  | (PendingDigestBase & { variant: 'short'; newShortIntros: string[] });
 
 function readBossConfig(): BossConfig {
   const raw = readFileSync(join(process.cwd(), 'src/config/pipeline.json'), 'utf-8');
@@ -310,7 +310,8 @@ async function handleDigest(message: TelegramMessage, variant: 'full' | 'short')
     let post: string;
 
     if (variant === 'short') {
-      const result = await generateShortDigest({ memoryEntries });
+      const previousShortIntros = (await store.get('previous-short-intros', { type: 'json' }) as string[] | null) ?? [];
+      const result = await generateShortDigest({ memoryEntries, previousIntros: previousShortIntros });
       if (!result.success || !result.post) {
         await editMessageText(chatId, progressMessageId, `❌ Пайплайн упал: ${(result.errors ?? []).join(', ')}`);
         return;
@@ -323,6 +324,7 @@ async function handleDigest(message: TelegramMessage, variant: 'full' | 'short')
         progressMessageId,
         post,
         selectedTopics: result.selectedTopics,
+        newShortIntros: [...previousShortIntros, extractShortIntro(post)].slice(-10),
         createdAt: new Date().toISOString(),
       };
     } else {
@@ -424,12 +426,15 @@ export async function handleDigestCallback(callbackQuery: TelegramCallbackQuery)
       postId: sendResult.messageId ?? null,
     }));
     await appendMemory(newEntries);
-    // Only a manually-published FULL digest suppresses the Thursday cron and updates
-    // intro anti-repetition. A short digest is a supplement: it dedups topics (appendMemory
-    // above) but must NOT skip the weekly full post or touch previous-intros.
+    // Both variants dedup topics (appendMemory above). Beyond that they diverge:
     if (pending.variant === 'full') {
+      // A manually-published FULL digest suppresses the Thursday cron and updates the
+      // full-digest intro anti-repetition list.
       await store.setJSON('digest-last-manual-at', { publishedAt: new Date().toISOString() });
       await store.setJSON('previous-intros', pending.newIntros);
+    } else {
+      // A SHORT digest keeps its OWN intro anti-repetition list and does NOT suppress the cron.
+      await store.setJSON('previous-short-intros', pending.newShortIntros);
     }
   } catch (err) {
     console.error('[boss] memory update failed after publish:', err);

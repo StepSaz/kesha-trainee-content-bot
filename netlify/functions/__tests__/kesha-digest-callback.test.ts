@@ -58,8 +58,8 @@ beforeEach(() => {
 });
 
 describe('handleDigestCallback publish path', () => {
-  it('short: appends memory, does NOT write digest-last-manual-at or previous-intros', async () => {
-    store.get.mockResolvedValueOnce({ ...basePending, variant: 'short' });
+  it('short: appends memory + writes previous-short-intros, NOT digest-last-manual-at or previous-intros', async () => {
+    store.get.mockResolvedValueOnce({ ...basePending, variant: 'short', newShortIntros: ['short-intro-1'] });
     await handleDigestCallback(callback('digest_prod:abc') as any);
 
     expect(mockSendToChannel).toHaveBeenCalledWith('POST BODY', 'channel');
@@ -67,6 +67,9 @@ describe('handleDigestCallback publish path', () => {
     const setKeys = store.setJSON.mock.calls.map((c) => c[0]);
     expect(setKeys).not.toContain('digest-last-manual-at');
     expect(setKeys).not.toContain('previous-intros');
+    const shortIntroCall = store.setJSON.mock.calls.find((c) => c[0] === 'previous-short-intros');
+    expect(shortIntroCall).toBeDefined();
+    expect(shortIntroCall![1]).toEqual(['short-intro-1']);
   });
 
   it('full: appends memory AND writes digest-last-manual-at + previous-intros', async () => {

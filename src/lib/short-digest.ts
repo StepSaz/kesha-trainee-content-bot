@@ -27,6 +27,20 @@ interface ShortDigestConfig {
 
 export interface ShortDigestOptions {
   memoryEntries?: MemoryEntry[];
+  previousIntros?: string[];
+}
+
+// Extracts the short digest's intro — the greeting line(s) between the mandatory
+// disclaimer header and the first 📎 bullet. Used for cross-week anti-repetition.
+export function extractShortIntro(post: string): string {
+  const lines = post.split('\n');
+  const firstBullet = lines.findIndex((l) => /^📎/u.test(l));
+  const head = firstBullet === -1 ? lines : lines.slice(0, firstBullet);
+  return head
+    .map((l) => l.trim())
+    .filter((l) => l && !/Я МАЛЕНЬКИЙ БОТ/i.test(l))
+    .join(' ')
+    .trim();
 }
 
 export interface ShortDigestResult {
@@ -50,17 +64,20 @@ function topicsList(topics: SelectedTopics): string {
     .join('\n');
 }
 
-async function generateShortPost(topics: SelectedTopics, hnContext: string, webContext: string, cfg: ShortDigestConfig): Promise<string> {
+async function generateShortPost(topics: SelectedTopics, hnContext: string, webContext: string, cfg: ShortDigestConfig, previousIntros?: string[]): Promise<string> {
   const persona = readConfig('kesha-short.txt');
   const now = new Date();
   const date = now.toLocaleDateString('ru-RU', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Europe/Warsaw',
   });
   const count = topics.topics.length;
+  const introsBlock = previousIntros && previousIntros.length > 0
+    ? `\n\nПОСЛЕДНИЕ ТВОИ ВСТУПЛЕНИЯ (НЕ повторяй ни словарь, ни структуру - напиши по-другому):\n${previousIntros.slice(-3).join('\n---\n')}`
+    : '';
   return callClaude({
     systemPrompt: persona,
     cacheSystem: true,
-    userMessage: `Сегодня ${date} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы (${count}):\n${topicsList(topics)}\n\nНапиши КОРОТКИЙ дайджест: ровно ${count} буллетов (каждый - строка, начинается с 📎, со ссылкой на источник), плюс короткий вывод в конце. По одному буллету на каждую тему из списка.`,
+    userMessage: `Сегодня ${date} по Варшаве.\n\nКонтекст из Hacker News:\n${hnContext}\n\nКонтекст из веб-поиска:\n${webContext}\n\nОтобранные темы (${count}):\n${topicsList(topics)}${introsBlock}\n\nНапиши КОРОТКИЙ дайджест: ровно ${count} буллетов (каждый - строка, начинается с 📎, со ссылкой на источник), плюс короткий вывод в конце. По одному буллету на каждую тему из списка. Начни с живого вступления (1-2 строки), каждый раз новым.`,
     model: cfg.generate.model,
     temperature: cfg.generate.temperature,
     maxTokens: cfg.generate.max_tokens,
@@ -137,7 +154,7 @@ export async function generateShortDigest(options: ShortDigestOptions = {}): Pro
 
     // Step 2: generate short post
     const t2 = Date.now();
-    const draft = await generateShortPost(selectedTopics, hnContext, webContext, cfg);
+    const draft = await generateShortPost(selectedTopics, hnContext, webContext, cfg, options.previousIntros);
     timing.generate = Date.now() - t2;
 
     // Step 3: review
