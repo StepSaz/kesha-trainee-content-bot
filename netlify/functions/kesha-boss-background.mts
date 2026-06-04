@@ -417,7 +417,6 @@ export async function handleDigestCallback(callbackQuery: TelegramCallbackQuery)
   await appendPublishedPost(pending.post, sendResult.messageId ?? null);
 
   try {
-    await store.setJSON('digest-last-manual-at', { publishedAt: new Date().toISOString() });
     const newEntries: MemoryEntry[] = pending.selectedTopics.topics.map((t) => ({
       url: t.sourceUrl,
       title: t.title,
@@ -425,8 +424,11 @@ export async function handleDigestCallback(callbackQuery: TelegramCallbackQuery)
       postId: sendResult.messageId ?? null,
     }));
     await appendMemory(newEntries);
-    // previous-intros only applies to the full digest (short has no ~ ~ ~ intro).
+    // Only a manually-published FULL digest suppresses the Thursday cron and updates
+    // intro anti-repetition. A short digest is a supplement: it dedups topics (appendMemory
+    // above) but must NOT skip the weekly full post or touch previous-intros.
     if (pending.variant === 'full') {
+      await store.setJSON('digest-last-manual-at', { publishedAt: new Date().toISOString() });
       await store.setJSON('previous-intros', pending.newIntros);
     }
   } catch (err) {
