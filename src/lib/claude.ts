@@ -1,6 +1,28 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ImageMediaType } from './telegram.js';
 
+// Retries fn up to maxRetries times on 429 rate-limit errors.
+// Waits for the retry-after header value if present, otherwise uses exponential backoff.
+async function withRateLimitRetry<T>(label: string, fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof Anthropic.RateLimitError && attempt < maxRetries - 1) {
+        const retryAfterRaw = err.headers?.get('retry-after');
+        const waitMs = retryAfterRaw
+          ? Math.ceil(parseFloat(retryAfterRaw) * 1000)
+          : Math.min(60_000, 15_000 * Math.pow(2, attempt));
+        console.warn(`[claude:${label}] 429 rate limit — waiting ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${maxRetries - 1})`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('unreachable');
+}
+
 export interface ConversationTurn {
   role: 'user' | 'assistant';
   content: string;
@@ -49,7 +71,7 @@ export async function callClaude(params: CallClaudeParams): Promise<string> {
     ? [{ type: 'text' as const, text: params.systemPrompt, cache_control: { type: 'ephemeral' as const } }]
     : params.systemPrompt;
 
-  const response = await client.messages.create({
+  const response = await withRateLimitRetry('callClaude', () => client.messages.create({
     model: params.model,
     system,
     messages: [
@@ -59,7 +81,7 @@ export async function callClaude(params: CallClaudeParams): Promise<string> {
     temperature: params.temperature,
     max_tokens: params.maxTokens,
     ...(tools ? { tools } : {}),
-  } as any);
+  } as any));
 
   logCacheUsage('callClaude', response.usage);
 
@@ -142,14 +164,14 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
   const mergedTools = [...(params.serverTools ?? []), ...params.tools];
 
   for (let i = 0; i < params.maxIterations; i++) {
-    const response = await client.messages.create({
+    const response = await withRateLimitRetry('callClaudeWithTools', () => client.messages.create({
       model: params.model,
       system: params.systemPrompt,
       messages,
       temperature: params.temperature,
       max_tokens: params.maxTokens,
       tools: mergedTools as unknown as Anthropic.Tool[],
-    } as any);
+    } as any));
 
     // Surface server-side tool calls for telemetry/tests even though they
     // don't need a client-side response.
@@ -193,13 +215,13 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
   }
 
   console.log(`[claude:tools] max iterations (${params.maxIterations}) reached — forcing final answer without tools`);
-  const final = await client.messages.create({
+  const final = await withRateLimitRetry('callClaudeWithTools:final', () => client.messages.create({
     model: params.model,
     system: params.systemPrompt,
     messages,
     temperature: params.temperature,
     max_tokens: params.maxTokens,
-  } as any);
+  } as any));
   const text = extractFinalText(final);
   // Defensive fallback: if the model still emitted only tool_use (no text) on the no-tools call,
   // we'd otherwise drop the reply silently. Better to say something honest.
@@ -226,7 +248,7 @@ export async function callClaudeStructured<T>(params: CallClaudeStructuredParams
     ? [{ type: 'text' as const, text: params.systemPrompt, cache_control: { type: 'ephemeral' as const } }]
     : params.systemPrompt;
 
-  const response = await client.messages.create({
+  const response = await withRateLimitRetry('callClaudeStructured', () => client.messages.create({
     model: params.model,
     system,
     messages: [{ role: 'user', content: params.userMessage }],
@@ -234,7 +256,7 @@ export async function callClaudeStructured<T>(params: CallClaudeStructuredParams
     max_tokens: params.maxTokens,
     tools: [params.tool],
     tool_choice: { type: 'tool', name: params.tool.name },
-  } as any);
+  } as any));
 
   logCacheUsage('callClaudeStructured', response.usage);
 
