@@ -1,6 +1,17 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ImageMediaType } from './telegram.js';
 
+// The SDK exposes APIError.headers as a plain object (Record<string, string>)
+// wrapped in a case-insensitive Proxy — not a Web Headers instance, so it has
+// no .get() method. Read defensively to support both shapes.
+function readHeader(headers: unknown, name: string): string | undefined {
+  if (!headers) return undefined;
+  if (typeof (headers as { get?: unknown }).get === 'function') {
+    return (headers as { get: (n: string) => string | null }).get(name) ?? undefined;
+  }
+  return (headers as Record<string, string | undefined>)[name];
+}
+
 // Retries fn up to maxRetries times on 429 rate-limit errors.
 // Waits for the retry-after header value if present, otherwise uses exponential backoff.
 async function withRateLimitRetry<T>(label: string, fn: () => Promise<T>, maxRetries = 3): Promise<T> {
@@ -9,9 +20,10 @@ async function withRateLimitRetry<T>(label: string, fn: () => Promise<T>, maxRet
       return await fn();
     } catch (err) {
       if (err instanceof Anthropic.RateLimitError && attempt < maxRetries - 1) {
-        const retryAfterRaw = err.headers?.get('retry-after');
-        const waitMs = retryAfterRaw
-          ? Math.ceil(parseFloat(retryAfterRaw) * 1000)
+        const retryAfterRaw = readHeader(err.headers, 'retry-after');
+        const parsed = retryAfterRaw ? parseFloat(retryAfterRaw) : NaN;
+        const waitMs = Number.isFinite(parsed)
+          ? Math.ceil(parsed * 1000)
           : Math.min(60_000, 15_000 * Math.pow(2, attempt));
         console.warn(`[claude:${label}] 429 rate limit — waiting ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${maxRetries - 1})`);
         await new Promise(resolve => setTimeout(resolve, waitMs));
