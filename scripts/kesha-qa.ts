@@ -25,8 +25,6 @@ import {
 } from '../src/lib/comment-reply.js';
 import { callClaudeWithTools } from '../src/lib/claude.js';
 import { COMMENT_TOOLS, makeExecuteTool } from '../src/lib/comment-tools.js';
-import { runBossPipeline } from '../src/lib/boss-pipeline.js';
-import { validateBossPost } from '../src/lib/validator.js';
 
 const COMMENT_SYSTEM_PROMPT = [
   'Ты Иннокентий ("Кеша") - бот-стажёр Telegram-канала "Временно Степан" (@psyreq).',
@@ -343,54 +341,6 @@ async function checkConsistency(): Promise<void> {
   }
 }
 
-async function checkBossPipeline(): Promise<void> {
-  section('/boss path: rough text → polished post');
-  const rough = `я тут чет подумал что vibe coding это новая школа разработки. везде хайп - cursor, claude code, windsurf. в принципе работает но иногда галлюцинации. зашло бы сравнение что лучше для джунов и сеньоров. бухгалтерия моя поддерживает.`;
-
-  const t0 = Date.now();
-  let result;
-  try {
-    result = await runBossPipeline(rough, { forceRaw: false });
-  } catch (err) {
-    flag({
-      category: 'pipeline',
-      severity: 'critical',
-      probe: 'boss-pipeline threw',
-      observed: String(err),
-      expected: 'returns BossPipelineResult',
-    });
-    return;
-  }
-  const elapsed = Date.now() - t0;
-
-  console.log(`\n  boss-pipeline: ${(elapsed / 1000).toFixed(1)}s, branch=${result.branch}, success=${result.success}`);
-  if (!result.success) {
-    flag({
-      category: 'pipeline',
-      severity: 'important',
-      probe: 'boss-pipeline did not succeed',
-      observed: result.error ?? 'unknown',
-      expected: 'success=true',
-    });
-  } else {
-    console.log(`\n    ---\n    ${result.finalText.replace(/\n/g, '\n    ')}\n    ---`);
-    const validation = validateBossPost(result.finalText);
-    if (validation.valid) {
-      ok('boss-pipeline output passes validateBossPost');
-    } else {
-      flag({
-        category: 'pipeline',
-        severity: 'important',
-        probe: 'boss-pipeline output fails validation',
-        observed: validation.errors.join(', '),
-        expected: 'validator passes',
-        evidence: result.finalText,
-      });
-    }
-    checkFormatHygiene('boss output format', result.finalText);
-  }
-}
-
 // ─── main ─────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -413,7 +363,6 @@ async function main(): Promise<void> {
   }
 
   await checkConsistency();
-  await checkBossPipeline();
 
   // ── итог ──────────────────────────────────────────────────────────────
   console.log(`\n${'═'.repeat(60)}\nИТОГ\n${'═'.repeat(60)}`);

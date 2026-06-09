@@ -2,7 +2,6 @@ import type { Config } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { runBossPipeline } from '../../src/lib/boss-pipeline.js';
 import { parseCommand, parseDigestVariant } from '../../src/lib/boss-command-parser.js';
 import {
   sendToChannel,
@@ -143,7 +142,7 @@ async function handleCommand(message: TelegramMessage): Promise<void> {
     return;
   }
 
-  const { forceRaw, forceSkip, inputText } = parseCommand(message.text ?? '');
+  const { inputText } = parseCommand(message.text ?? '');
 
   if (inputText.length < config.min_input_length) {
     await sendMessage(
@@ -161,7 +160,7 @@ async function handleCommand(message: TelegramMessage): Promise<void> {
     return;
   }
 
-  const initResult = await sendMessage(chatId, '🔍 Ревьювлю...');
+  const initResult = await sendMessage(chatId, '📤 Публикую как есть, без ревью...');
   if (!initResult.success || !initResult.messageId) {
     console.error('[boss] failed to send initial progress message:', initResult.error);
     return;
@@ -169,63 +168,16 @@ async function handleCommand(message: TelegramMessage): Promise<void> {
   const progressMessageId = initResult.messageId;
   const channelId = process.env.TELEGRAM_CHAT_ID!;
 
+  // /boss is a pure passthrough: the boss's text goes to the channel verbatim —
+  // no review, no rewrite, no preview. Only access and length checks above.
   try {
-    const result = await runBossPipeline(inputText, { forceRaw, forceSkip }, async (status) => {
-      await editMessageText(chatId, progressMessageId, status);
-    });
-
-    if (!result.success) {
-      await editMessageText(chatId, progressMessageId, `❌ Ошибка: ${result.error}`);
+    const sendResult = await sendToChannel(inputText, channelId);
+    if (!sendResult.success) {
+      await editMessageText(chatId, progressMessageId, `❌ Ошибка публикации: ${sendResult.error}`);
       return;
     }
-
-    if (result.branch === 'READY') {
-      await editMessageText(chatId, progressMessageId, '✅ Текст норм, постить без переработки...');
-      const sendResult = await sendToChannel(result.finalText, channelId);
-      if (sendResult.success) {
-        await editMessageText(chatId, progressMessageId, `✅ Опубликовано: t.me/psyreq/${sendResult.messageId}`);
-      } else {
-        await editMessageText(chatId, progressMessageId, `❌ Ошибка публикации: ${sendResult.error}`);
-      }
-      return;
-    }
-
-    // RAW branch — save pending preview
-    const previewId = crypto.randomUUID();
-    const store = getStore('kesha');
-
-    const keyboard: InlineKeyboard = {
-      inline_keyboard: [[
-        { text: '✅ Постить', callback_data: `confirm:${previewId}` },
-        { text: '❌ Отмена', callback_data: `cancel:${previewId}` },
-      ]],
-    };
-
-    await editMessageText(chatId, progressMessageId, '👀 Готово. Превью выше, подтверди публикацию.');
-
-    const previewMsg = await sendMessage(
-      chatId,
-      `🐤 Текст показался сыроватым, переписал. Постить?\n\n${result.finalText}`,
-      { replyMarkup: keyboard }
-    );
-
-    if (!previewMsg.success || !previewMsg.messageId) {
-      console.error('[boss] failed to send preview message:', previewMsg.error);
-      await editMessageText(chatId, progressMessageId, '❌ Не удалось отправить превью.');
-      return;
-    }
-
-    const pending: PendingPreview = {
-      userId,
-      chatId,
-      previewMessageId: previewMsg.messageId,
-      finalText: result.finalText,
-      channelId,
-      createdAt: new Date().toISOString(),
-    };
-
-    await store.setJSON(`boss-preview:${previewId}`, pending);
-    console.log(`[boss] preview saved previewId=${previewId}`);
+    await appendPublishedPost(inputText, sendResult.messageId ?? null);
+    await editMessageText(chatId, progressMessageId, `✅ Опубликовано: t.me/psyreq/${sendResult.messageId}`);
   } catch (err) {
     console.error('[boss] unexpected error in command handler:', err);
     await editMessageText(chatId, progressMessageId, `❌ Что-то пошло не так: ${String(err)}`);
@@ -800,7 +752,7 @@ async function handleDmChat(message: TelegramMessage): Promise<void> {
     `Сегодня ${today}. Твоё внутреннее знание устарело — для любых фактов о текущем мире доверяй блоку "СВЕЖИЙ ВЕБ-ПОИСК" в сообщении пользователя выше своих знаний.`,
     'Архитектура: serverless background function на Netlify.',
     'Посты по четвергам в 16:00 Варшавы генеришь через Claude Sonnet с managed agent и web search.',
-    'Команды босса: /digest (полный пост), /short (короткий дайджест одной строкой на тему, то же что /digest short), /boss (обработать готовый текст), /notes (пост из .md).',
+    'Команды босса: /digest (полный пост), /short (короткий дайджест одной строкой на тему, то же что /digest short), /boss (запостить готовый текст в канал как есть, без ревью), /notes (пост из .md).',
     'В комментах канала отвечаешь читателям через Claude Haiku.',
     'В личке тоже на Haiku — дешевле, и для болтовни хватает. На каждое сообщение система автоматически дёргает Tavily и кладёт результаты в блок "СВЕЖИЙ ВЕБ-ПОИСК".',
     'Если блок есть — используй его как первоисточник, ссылайся на URL по делу. Если блока нет или он пустой — честно скажи, что свежей инфы под рукой нет, не выдумывай актуальные факты.',
