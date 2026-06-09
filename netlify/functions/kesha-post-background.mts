@@ -114,7 +114,7 @@ export default async (): Promise<Response> => {
       selectedTopics: result.selectedTopics,
       draft: result.draft,
       review: result.review,
-      rewrote: result.review.verdict !== 'ok' && !!result.post && result.post !== result.draft,
+      rewrote: result.review?.verdict !== 'ok' && !!result.post && result.post !== result.draft,
       post: result.post,
       timing: result.timing,
       sendResult,
@@ -124,7 +124,7 @@ export default async (): Promise<Response> => {
 
     await appendPublishedPost(result.post!, sendResult.messageId ?? null);
 
-    if (mode !== 'managed') {
+    if (mode !== 'managed' && cronChannel !== 'test') {
       const pipelineResult = result as PipelineResult;
       const newEntries: MemoryEntry[] = pipelineResult.selectedTopics.topics.map(t => ({
         url: t.sourceUrl,

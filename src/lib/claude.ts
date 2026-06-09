@@ -12,24 +12,33 @@ function readHeader(headers: unknown, name: string): string | undefined {
   return (headers as Record<string, string | undefined>)[name];
 }
 
+const MAX_RETRY_AFTER_MS = 120_000;
+
+// Parses the Retry-After header value: seconds (decimal) or HTTP-date.
+// Exported for unit testing.
+export function parseRetryAfter(raw: string | undefined): number {
+  if (!raw) return 15_000;
+  const seconds = parseFloat(raw);
+  if (Number.isFinite(seconds)) return Math.min(Math.ceil(seconds * 1000), MAX_RETRY_AFTER_MS);
+  const ts = Date.parse(raw);
+  if (!isNaN(ts)) return Math.min(Math.max(0, ts - Date.now()), MAX_RETRY_AFTER_MS);
+  return 15_000;
+}
+
 // Retries fn up to maxRetries times on 429 rate-limit errors.
-// Waits for the retry-after header value if present, otherwise uses exponential backoff.
+// Passes maxRetries: 0 to the Anthropic client to disable SDK-level retries —
+// otherwise a single logical retry would fire up to SDK.maxRetries+1 HTTP requests.
 async function withRateLimitRetry<T>(label: string, fn: () => Promise<T>, maxRetries = 3): Promise<T> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      if (err instanceof Anthropic.RateLimitError && attempt < maxRetries - 1) {
-        const retryAfterRaw = readHeader(err.headers, 'retry-after');
-        const parsed = retryAfterRaw ? parseFloat(retryAfterRaw) : NaN;
-        const waitMs = Number.isFinite(parsed)
-          ? Math.ceil(parsed * 1000)
-          : Math.min(60_000, 15_000 * Math.pow(2, attempt));
-        console.warn(`[claude:${label}] 429 rate limit — waiting ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${maxRetries - 1})`);
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-        continue;
-      }
-      throw err;
+      if (!(err instanceof Anthropic.RateLimitError)) throw err;
+      if (attempt >= maxRetries - 1) throw err;
+      if (readHeader(err.headers, 'x-should-retry') === 'false') throw err;
+      const waitMs = parseRetryAfter(readHeader(err.headers, 'retry-after'));
+      console.warn(`[claude:${label}] 429 rate limit — waiting ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${maxRetries - 1})`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
     }
   }
   throw new Error('unreachable');
@@ -70,7 +79,7 @@ function logCacheUsage(label: string, usage: Anthropic.Message['usage'] | undefi
 }
 
 export async function callClaude(params: CallClaudeParams): Promise<string> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 });
 
   const tools = params.tools?.includes('web_search')
     ? [{ type: 'web_search_20250305' as const, name: 'web_search' as const }]
@@ -167,7 +176,7 @@ function extractFinalText(response: Anthropic.Message): string {
 // Note: conversationHistory carries only plain-text turns (final user/assistant).
 // Tool roundtrips are appended fresh each call and not persisted by callers.
 export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Promise<string> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 });
   const messages: Anthropic.MessageParam[] = [
     ...(params.conversationHistory ?? []),
     { role: 'user', content: params.userMessage },
@@ -254,7 +263,7 @@ export interface CallClaudeStructuredParams {
 // Forces the model to call a single tool and returns its parsed input as a typed object.
 // Anthropic tool_choice: { type: 'tool', name } guarantees a tool_use block — no prose fallback.
 export async function callClaudeStructured<T>(params: CallClaudeStructuredParams): Promise<T> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 });
 
   const system = params.cacheSystem
     ? [{ type: 'text' as const, text: params.systemPrompt, cache_control: { type: 'ephemeral' as const } }]

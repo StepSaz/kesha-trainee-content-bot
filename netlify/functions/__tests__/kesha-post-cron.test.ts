@@ -11,7 +11,7 @@ vi.mock('../../../src/lib/pipeline.js', async () => {
   const actual = await vi.importActual<typeof import('../../../src/lib/pipeline.js')>('../../../src/lib/pipeline.js');
   return { ...actual, generatePipelinePost: vi.fn() };
 });
-vi.mock('../../../src/lib/short-digest.js', () => ({ generateShortDigest: vi.fn() }));
+vi.mock('../../../src/lib/short-digest.js', () => ({ generateShortDigest: vi.fn(), extractShortIntro: vi.fn(() => 'mock intro') }));
 
 import cronHandler from '../kesha-post-background.mts';
 import { generatePipelinePost } from '../../../src/lib/pipeline.js';
@@ -47,6 +47,7 @@ beforeEach(() => {
 describe('cron digest format selection', () => {
   it('default (full): calls generatePipelinePost, writes previous-intros', async () => {
     delete process.env.KESHA_DIGEST_FORMAT;
+    process.env.KESHA_CRON_CHANNEL = 'main';
     mockPipeline.mockResolvedValue(okResult('full post ~ ~ ~ body') as any);
 
     await cronHandler();
@@ -68,5 +69,29 @@ describe('cron digest format selection', () => {
     const setKeys = store.setJSON.mock.calls.map((c) => c[0]);
     expect(setKeys).not.toContain('previous-intros');
     expect(mockSend).toHaveBeenCalledWith('📎 a https://u/1', 'test-chan');
+  });
+
+  it('KESHA_DIGEST_FORMAT=short + prod channel: writes previous-short-intros, not previous-intros', async () => {
+    process.env.KESHA_DIGEST_FORMAT = 'short';
+    process.env.KESHA_CRON_CHANNEL = 'main';
+    mockShort.mockResolvedValue(okResult('📎 a https://u/1') as any);
+
+    await cronHandler();
+
+    const setKeys = store.setJSON.mock.calls.map((c) => c[0]);
+    expect(setKeys).toContain('previous-short-intros');
+    expect(setKeys).not.toContain('previous-intros');
+    expect(mockSend).toHaveBeenCalledWith('📎 a https://u/1', 'prod-chan');
+  });
+
+  it('test channel (any format): does NOT write memory or intros', async () => {
+    // cronChannel = 'test' (from beforeEach) — memory writes should be suppressed
+    mockPipeline.mockResolvedValue(okResult('full post body') as any);
+
+    await cronHandler();
+
+    const setKeys = store.setJSON.mock.calls.map((c) => c[0]);
+    expect(setKeys).not.toContain('previous-intros');
+    expect(setKeys).not.toContain('previous-short-intros');
   });
 });
