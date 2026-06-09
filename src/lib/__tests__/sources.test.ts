@@ -257,9 +257,11 @@ describe('fetchSourceContext — HN feed', () => {
     expect(context).toContain('TL;DR: xAI launched Grok 4.3');
   });
 
-  it('throws on HN network error when no RSS feeds configured', async () => {
+  it('returns empty context on HN network error when no RSS feeds configured', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')));
-    await expect(fetchSourceContext()).rejects.toThrow('network error');
+    const result = await fetchSourceContext();
+    expect(result.context).toBe('');
+    expect(result.itemCount).toBe(0);
   });
 
   it('returns empty context when feed has no items and RSS is also empty', async () => {

@@ -3,13 +3,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Module-level mock — Vitest hoists this automatically
 const mockCreate = vi.fn();
 
-vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
+vi.mock('@anthropic-ai/sdk', () => {
+  class RateLimitError extends Error {
+    status = 429;
+    headers: Record<string, string | undefined>;
+    constructor(headers?: Record<string, string | undefined>) {
+      super('Rate limit exceeded');
+      this.headers = headers ?? {};
+    }
+  }
+  const MockClient = vi.fn().mockImplementation(() => ({
     messages: { create: mockCreate },
-  })),
-}));
+  }));
+  (MockClient as any).RateLimitError = RateLimitError;
+  return { default: MockClient };
+});
 
-import { callClaude, callClaudeWithTools, type ToolDef, type ToolResult } from '../claude.js';
+import Anthropic from '@anthropic-ai/sdk';
+import { callClaude, callClaudeWithTools, parseRetryAfter, type ToolDef, type ToolResult } from '../claude.js';
 
 const BASE_PARAMS = {
   systemPrompt: 'You are helpful.',
@@ -275,6 +286,15 @@ describe('callClaudeWithTools', () => {
     expect(result).toContain('завис');
   });
 
+  it('passes maxRetries: 0 to Anthropic constructor to disable SDK-level retries', async () => {
+    mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+
+    await callClaude(BASE_PARAMS);
+
+    const MockClient = vi.mocked(Anthropic);
+    expect(MockClient).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0 }));
+  });
+
   it('handles multiple tool_use blocks in a single response', async () => {
     mockCreate
       .mockResolvedValueOnce({
@@ -306,5 +326,73 @@ describe('callClaudeWithTools', () => {
     expect(followupContent).toHaveLength(2);
     expect(followupContent[0]).toMatchObject({ tool_use_id: 'a', content: 'content-1' });
     expect(followupContent[1]).toMatchObject({ tool_use_id: 'b', content: 'content-2' });
+  });
+});
+
+describe('parseRetryAfter', () => {
+  it('parses decimal seconds', () => {
+    expect(parseRetryAfter('45')).toBe(45_000);
+    expect(parseRetryAfter('0.5')).toBe(500);
+    expect(parseRetryAfter('0')).toBe(0);
+  });
+
+  it('caps at 120 seconds', () => {
+    expect(parseRetryAfter('300')).toBe(120_000);
+    expect(parseRetryAfter('120')).toBe(120_000);
+    expect(parseRetryAfter('119')).toBe(119_000);
+  });
+
+  it('parses HTTP-date roughly 30s in future', () => {
+    const future = new Date(Date.now() + 30_000).toUTCString();
+    const result = parseRetryAfter(future);
+    expect(result).toBeGreaterThan(25_000);
+    expect(result).toBeLessThanOrEqual(30_000);
+  });
+
+  it('caps HTTP-date at 120s even if far future', () => {
+    const farFuture = new Date(Date.now() + 600_000).toUTCString();
+    expect(parseRetryAfter(farFuture)).toBe(120_000);
+  });
+
+  it('returns 15s default for undefined or unparseable', () => {
+    expect(parseRetryAfter(undefined)).toBe(15_000);
+    expect(parseRetryAfter('not-a-date')).toBe(15_000);
+    expect(parseRetryAfter('')).toBe(15_000);
+  });
+});
+
+describe('rate-limit retry', () => {
+  it('retries once on 429 and succeeds on second attempt', async () => {
+    const rl = new (Anthropic as any).RateLimitError({ 'retry-after': '0' });
+    mockCreate
+      .mockRejectedValueOnce(rl)
+      .mockResolvedValueOnce({ content: [{ type: 'text', text: 'ok after retry' }] });
+
+    const result = await callClaude(BASE_PARAMS);
+    expect(result).toBe('ok after retry');
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws after exhausting all 3 attempts', async () => {
+    const rl = new (Anthropic as any).RateLimitError({ 'retry-after': '0' });
+    mockCreate.mockRejectedValue(rl);
+
+    await expect(callClaude(BASE_PARAMS)).rejects.toThrow();
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops immediately when x-should-retry is false', async () => {
+    const rl = new (Anthropic as any).RateLimitError({ 'retry-after': '0', 'x-should-retry': 'false' });
+    mockCreate.mockRejectedValue(rl);
+
+    await expect(callClaude(BASE_PARAMS)).rejects.toThrow();
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry on non-429 errors', async () => {
+    mockCreate.mockRejectedValue(new Error('network error'));
+
+    await expect(callClaude(BASE_PARAMS)).rejects.toThrow('network error');
+    expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 });

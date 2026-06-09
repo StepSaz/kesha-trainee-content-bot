@@ -439,9 +439,13 @@ export async function fetchSourceContext(excludeUrls?: Set<string>): Promise<Sou
 
   const cutoff = getCutoffDate();
 
-  const hn = await fetchHN(cfg.hackernews_api, excludeUrls, cutoff);
-
-  const rssSettled = await Promise.allSettled(rssFeedUrls.map(url => fetchRss(url, excludeUrls, cutoff)));
+  const [hn, rssSettled] = await Promise.all([
+    fetchHN(cfg.hackernews_api, excludeUrls, cutoff).catch((err) => {
+      console.warn('[sources] HN fetch failed:', err);
+      return { lines: [] as string[], urls: [] as string[] };
+    }),
+    Promise.allSettled(rssFeedUrls.map(url => fetchRss(url, excludeUrls, cutoff))),
+  ]);
 
   const rssSections: string[] = [];
   for (let i = 0; i < rssSettled.length; i++) {

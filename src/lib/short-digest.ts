@@ -113,12 +113,12 @@ async function rewriteShortPost(draft: string, review: ReviewResult, cfg: ShortD
   });
 }
 
-async function fixShortPost(post: string, errors: string[], cfg: ShortDigestConfig): Promise<string> {
+async function fixShortPost(post: string, errors: string[], hnContext: string, webContext: string, cfg: ShortDigestConfig): Promise<string> {
   const persona = readConfig('kesha-short.txt');
   return callClaude({
     systemPrompt: persona,
     cacheSystem: true,
-    userMessage: `Короткий дайджест не прошёл проверку. Ошибки:\n\n${errors.join('\n')}\n\nВот пост:\n\n${post}\n\nИсправь ТОЛЬКО эти проблемы. Сохрани формат (буллеты с 📎 + короткий вывод) и голос Кеши. Верни только исправленный пост без пояснений.`,
+    userMessage: `Короткий дайджест не прошёл проверку. Ошибки:\n\n${errors.join('\n')}\n\nВот пост:\n\n${post}\n\nКонтекст источников (для замены неверных ссылок):\n${hnContext}\n${webContext}\n\nИсправь ТОЛЬКО эти проблемы. Сохрани формат (буллеты с 📎 + короткий вывод) и голос Кеши. Верни только исправленный пост без пояснений.`,
     model: cfg.fix.model,
     temperature: cfg.fix.temperature,
     maxTokens: cfg.fix.max_tokens,
@@ -183,13 +183,20 @@ export async function generateShortDigest(options: ShortDigestOptions = {}): Pro
       const countErrors = linked !== expected
         ? [`Expected ${expected} news items, found ${linked} 📎+URL lines`]
         : [];
-      return [...structural, ...urlErrors, ...countErrors];
+      const bulletUrls = [...post.matchAll(/^📎[^\n]*(https?:\/\/\S+)/gmu)].map(m => m[1]);
+      const seen = new Set<string>();
+      const dupErrors: string[] = [];
+      for (const u of bulletUrls) {
+        if (seen.has(u)) dupErrors.push(`Duplicate URL ${u} — each bullet must link to a different source`);
+        seen.add(u);
+      }
+      return [...structural, ...urlErrors, ...countErrors, ...dupErrors];
     };
 
     let postErrors = collectErrors(finalPost);
     for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS && postErrors.length > 0; attempt++) {
       const tFix = Date.now();
-      finalPost = await fixShortPost(finalPost, postErrors, cfg);
+      finalPost = await fixShortPost(finalPost, postErrors, hnContext, webContext, cfg);
       timing[`fix${attempt + 1}`] = Date.now() - tFix;
       postErrors = collectErrors(finalPost);
     }
