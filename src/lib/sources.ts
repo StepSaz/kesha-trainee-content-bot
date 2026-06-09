@@ -61,13 +61,19 @@ export function getCutoffDate(days = 7, now: Date = new Date()): Date {
 }
 
 /**
- * Returns true iff date is valid and its UTC day >= cutoff.
+ * Returns true iff date is valid and its UTC day is within [cutoff, upper].
+ * When `upper` is omitted only the lower bound is enforced (back-compat).
  * null or invalid date => false (NOT fresh).
  */
-export function isFreshDate(date: Date | null, cutoff: Date): boolean {
+export function isFreshDate(date: Date | null, cutoff: Date, upper?: Date): boolean {
   if (!date || Number.isNaN(date.getTime())) return false;
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  return d.getTime() >= cutoff.getTime();
+  if (d.getTime() < cutoff.getTime()) return false;
+  if (upper) {
+    const u = new Date(Date.UTC(upper.getUTCFullYear(), upper.getUTCMonth(), upper.getUTCDate()));
+    if (d.getTime() > u.getTime()) return false;
+  }
+  return true;
 }
 
 /**
@@ -508,7 +514,8 @@ export async function fetchLightWebSearch(excludeUrls?: Set<string>): Promise<st
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   // Single source of truth for the 7-day window (shared with HN/RSS paths).
-  const cutoff = getCutoffDate(7, now).toISOString().slice(0, 10);
+  const cutoffDate = getCutoffDate(7, now);
+  const cutoff = cutoffDate.toISOString().slice(0, 10);
 
   const systemPrompt =
     `Today is ${today}. Search for AI news published between ${cutoff} and ${today}.\n` +
@@ -560,7 +567,13 @@ export async function fetchLightWebSearch(excludeUrls?: Set<string>): Promise<st
     }
 
     // Programmatic date filter — do not trust the model to self-filter
-    const fresh = items.filter(item => item.date && item.headline && item.url && item.date >= cutoff);
+    const fresh = items.filter(item =>
+      item &&
+      item.date &&
+      item.headline &&
+      item.url &&
+      isFreshDate(new Date(item.date), cutoffDate, now)
+    );
     const unique = fresh.filter(item => !isExcluded(item.url, excludeUrls));
 
     const stale = items.length - fresh.length;

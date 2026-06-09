@@ -510,6 +510,52 @@ describe('fetchLightWebSearch', () => {
     expect(result).not.toContain('Old news');
   });
 
+  it('drops items with invalid dates even when date strings compare as fresh', async () => {
+    const mixed = JSON.stringify([
+      { headline: 'Fresh news', url: 'https://example.com/fresh', date: yesterday },
+      { headline: 'Invalid date news', url: 'https://example.com/invalid', date: 'zzzz-not-a-date' },
+    ]);
+    mockCallClaude
+      .mockResolvedValueOnce(mixed)
+      .mockResolvedValueOnce('[]');
+
+    const result = await fetchLightWebSearch();
+
+    expect(result).toContain('Fresh news');
+    expect(result).not.toContain('Invalid date news');
+  });
+
+  it('drops items dated in the future (only [cutoff, today] is fresh)', async () => {
+    const future = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const mixed = JSON.stringify([
+      { headline: 'Fresh news', url: 'https://example.com/fresh', date: yesterday },
+      { headline: 'Future news', url: 'https://example.com/future', date: future },
+    ]);
+    mockCallClaude
+      .mockResolvedValueOnce(mixed)
+      .mockResolvedValueOnce('[]');
+
+    const result = await fetchLightWebSearch();
+
+    expect(result).toContain('Fresh news');
+    expect(result).not.toContain('Future news');
+  });
+
+  it('does not crash on null or non-object array elements', async () => {
+    const withJunk = JSON.stringify([
+      null,
+      42,
+      { headline: 'Fresh news', url: 'https://example.com/fresh', date: yesterday },
+    ]);
+    mockCallClaude
+      .mockResolvedValueOnce(withJunk)
+      .mockResolvedValueOnce('[]');
+
+    const result = await fetchLightWebSearch();
+
+    expect(result).toContain('Fresh news');
+  });
+
   it('returns empty string when model returns only stale items', async () => {
     const staleOnly = JSON.stringify([
       { headline: 'Old news', url: 'https://example.com/old', date: oldDate },
