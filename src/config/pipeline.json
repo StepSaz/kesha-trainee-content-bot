@@ -69,18 +69,6 @@
       "per_thread_limit": 6,
       "per_user_spam_threshold": 7,
       "per_user_window_hours": 24
-    },
-    "models": {
-      "review": {
-        "model": "claude-sonnet-4-6",
-        "temperature": 0.3,
-        "max_tokens": 4096
-      },
-      "rewrite": {
-        "model": "claude-sonnet-4-6",
-        "temperature": 0.6,
-        "max_tokens": 2048
-      }
     }
   }
 }
