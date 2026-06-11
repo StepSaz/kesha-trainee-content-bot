@@ -160,7 +160,7 @@ export default async (): Promise<Response> => {
   }
 };
 
-export const config: Config = {
-  // Every Thursday at 14:00 UTC (16:00 Warsaw / CEST).
-  schedule: '0 14 * * 4',
-};
+// Weekly cron disabled 2026-06-11 — digest is published manually via the /digest
+// boss command (or the HTTP trigger endpoint) when the week looks empty.
+// To re-enable: export const config: Config = { schedule: '0 14 * * 4' };
+export const config: Config = {};
