@@ -217,7 +217,7 @@ describe('makeExecuteTool: web_search', () => {
     expect(result as string).toContain('https://blog.google/a');
   });
 
-  it('uses advanced depth, news topic, weekly time range, top-5 results, and excludes low-signal forums', async () => {
+  it('defaults to a general search with no time range (factual queries)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ results: [] }),
@@ -225,15 +225,30 @@ describe('makeExecuteTool: web_search', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const exec = makeExecuteTool({});
-    await exec('web_search', { query: 'gemini' });
+    await exec('web_search', { query: 'what is Bielik LLM' });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.search_depth).toBe('advanced');
     expect(body.max_results).toBe(5);
-    expect(body.topic).toBe('news');
-    expect(body.time_range).toBe('week');
+    expect(body.topic).toBe('general');
+    expect(body.time_range).toBeUndefined();
     expect(body.chunks_per_source).toBe(5);
     expect(body.exclude_domains).toEqual(['reddit.com', 'quora.com']);
+  });
+
+  it('applies news topic and weekly time range when fresh=true', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const exec = makeExecuteTool({});
+    await exec('web_search', { query: 'latest model releases', fresh: true });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.topic).toBe('news');
+    expect(body.time_range).toBe('week');
   });
 
   it('reports empty result set', async () => {

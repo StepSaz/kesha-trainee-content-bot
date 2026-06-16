@@ -52,13 +52,17 @@ export const COMMENT_TOOLS: ToolDef[] = [
   {
     name: 'web_search',
     description:
-      'Поиск свежей информации в вебе (Tavily, advanced depth, topic=news, time=last 7 days, без reddit/quora). Зови когда читатель просит копнуть глубже, расскажи подробнее / спрашивает конкретные цифры, цены, бенчмарки, даты / задаёт вопрос про события свежее твоих знаний. На "спасибо/что думаешь" не зови. Возвращает топ-5 результатов (title + url + сниппет). Максимум 2 вызова за разговор. Иди в поиск сразу, не предлагай «могу поискать». Запрос делай коротко (под 400 символов), лучше на английском для tech-новостей.',
+      'Поиск в вебе (Tavily, advanced depth, без reddit/quora). По умолчанию обычный поиск по релевантности — для фактических вопросов «что такое X / расскажи про X / цифры, цены, бенчмарки». Зови когда читатель просит копнуть глубже / спрашивает факты, которых нет в посте. На "спасибо/что думаешь" не зови. Возвращает топ-5 результатов (title + url + сниппет). Максимум 2 вызова за разговор. Иди в поиск сразу, не предлагай «могу поискать». Запрос делай коротко (под 400 символов), лучше на английском для tech-тем.',
     input_schema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Поисковый запрос на том языке, на котором ожидаются источники (для tech-новостей обычно en).',
+          description: 'Поисковый запрос на том языке, на котором ожидаются источники (для tech-тем обычно en).',
+        },
+        fresh: {
+          type: 'boolean',
+          description: 'true ТОЛЬКО если вопрос именно про свежие события (релизы/анонсы/новости за последнюю неделю). Тогда поиск ограничится новостями за 7 дней. Для общих фактических вопросов («что такое X») оставь false/не указывай — иначе свежий новостной фильтр отсечёт релевантные источники.',
         },
       },
       required: ['query'],
@@ -106,11 +110,17 @@ export function makeExecuteTool(
       if (!query) return 'нужен непустой query';
       searchCalls += 1;
 
+      // Default to a general relevance search. The news+week filter is great
+      // for "what dropped this week" but starves evergreen/factual questions
+      // ("what is X") — irrelevant news ranks ~0.02 and gets dropped by
+      // minScore, returning nothing. Only opt into news/week when the model
+      // flags the question as genuinely recency-sensitive (fresh=true).
+      const fresh = input.fresh === true;
       const results = await tavilySearch(query, {
         maxResults: SEARCH_RESULTS,
         depth: SEARCH_DEPTH,
-        topic: SEARCH_TOPIC,
-        timeRange: SEARCH_TIME_RANGE,
+        topic: fresh ? SEARCH_TOPIC : 'general',
+        ...(fresh ? { timeRange: SEARCH_TIME_RANGE } : {}),
         chunksPerSource: SEARCH_CHUNKS_PER_SOURCE,
         minScore: SEARCH_MIN_SCORE,
         excludeDomains: SEARCH_EXCLUDE_DOMAINS,
