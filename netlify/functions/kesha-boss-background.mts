@@ -884,7 +884,9 @@ export default async (req: Request): Promise<Response> => {
     const mentionsKesha = KESHA_ADDRESS.test(msg.text ?? '');
     const isReplyToBot = botId !== null && msg.reply_to_message?.from?.id === botId;
     // Explicit @-tag of the bot (e.g. "@kesha_trainee_bot помоги") is also an address.
-    const taggedBot = tagsBot(msg, await getBotUsername(), botId);
+    // Resolve the username lazily — only when the cheaper checks miss — so plain
+    // replies don't pay for a getMe round-trip.
+    const taggedBot = !mentionsKesha && !isReplyToBot && tagsBot(msg, await getBotUsername(), botId);
     if (mentionsKesha || isReplyToBot || taggedBot) {
       await handleCommentReply(msg);
     }
