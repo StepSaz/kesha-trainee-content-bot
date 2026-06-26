@@ -49,6 +49,7 @@ interface TelegramEntity {
   offset: number;
   length: number;
   url?: string;
+  user?: TelegramUser;
 }
 
 interface TelegramReplyMessage {
@@ -68,6 +69,7 @@ interface TelegramMessage {
   chat: TelegramChat;
   text?: string;
   caption?: string;
+  entities?: TelegramEntity[];
   document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
   reply_to_message?: TelegramReplyMessage;
   message_thread_id?: number;
@@ -728,6 +730,41 @@ function getBotUserId(): number | null {
   return Number.isFinite(id) ? id : null;
 }
 
+// The token gives us the bot's numeric id but not its @username, which we need to
+// match explicit @-tags in comments. Fetch it once via getMe and cache for the
+// lifetime of the function instance. `undefined` = not fetched yet, `null` = no username.
+let cachedBotUsername: string | null | undefined;
+async function getBotUsername(): Promise<string | null> {
+  if (cachedBotUsername !== undefined) return cachedBotUsername;
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return (cachedBotUsername = null);
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const data = await res.json();
+    cachedBotUsername = data?.result?.username ? `@${data.result.username}` : null;
+  } catch (err) {
+    console.error('[comment] getMe failed, cannot match @-tags:', err);
+    cachedBotUsername = null;
+  }
+  return cachedBotUsername;
+}
+
+// True when the comment explicitly @-tags the bot (e.g. "@kesha_trainee_bot помоги").
+// Matches `mention` entities against the bot's username, plus `text_mention` entities
+// that carry the bot's user id directly.
+function tagsBot(msg: TelegramMessage, botUsername: string | null, botId: number | null): boolean {
+  const text = msg.text ?? '';
+  for (const e of msg.entities ?? []) {
+    if (e.type === 'mention' && botUsername) {
+      const slice = text.slice(e.offset, e.offset + e.length);
+      if (slice.toLowerCase() === botUsername.toLowerCase()) return true;
+    } else if (e.type === 'text_mention' && botId !== null && e.user?.id === botId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function shouldSkipSearch(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < 8) return true;
@@ -846,7 +883,9 @@ export default async (req: Request): Promise<Response> => {
     const KESHA_ADDRESS = /(?:^|\n|[.!?]\s+)\s*кеша(?![\p{L}])|кеша(?=[,!?:])|кеша(?![\p{L}])\s*$/iu;
     const mentionsKesha = KESHA_ADDRESS.test(msg.text ?? '');
     const isReplyToBot = botId !== null && msg.reply_to_message?.from?.id === botId;
-    if (mentionsKesha || isReplyToBot) {
+    // Explicit @-tag of the bot (e.g. "@kesha_trainee_bot помоги") is also an address.
+    const taggedBot = tagsBot(msg, await getBotUsername(), botId);
+    if (mentionsKesha || isReplyToBot || taggedBot) {
       await handleCommentReply(msg);
     }
   }
