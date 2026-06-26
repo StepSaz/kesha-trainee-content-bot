@@ -467,6 +467,9 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
   // per-thread check and rely solely on the per-user guard above.
   if (!isBoss && message.message_thread_id) {
     const rateKey = `comment-rate:${chatId}:${message.message_thread_id}`;
+    // One-shot flag so the "thread is full" notice is sent exactly once per thread
+    // window, not on every over-limit message (would spam) and not never (looks dead).
+    const noticeKey = `comment-limit-notified:${chatId}:${message.message_thread_id}`;
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     const expiresAt = new Date(Date.now() + thirtyDaysMs).toISOString();
     const existing = await store.getWithMetadata(rateKey, { type: 'json' });
@@ -477,21 +480,24 @@ async function handleCommentReply(message: TelegramMessage): Promise<void> {
     console.log(`[comment] thread=${message.message_thread_id} threadCount=${effectiveCount}/${commentCfg.per_thread_limit}`);
 
     if (effectiveCount >= commentCfg.per_thread_limit) {
-      console.log(`[comment] thread=${message.message_thread_id} silently limited`);
+      // Thread is exhausted. Surface it once so the bot doesn't look dead, then stay
+      // quiet on every further message until the 30-day window rolls over.
+      const alreadyNotified = (await store.get(noticeKey, { type: 'json' })) as boolean | null;
+      if (!alreadyNotified) {
+        console.log(`[comment] thread=${message.message_thread_id} limit reached — one-time notice`);
+        await sendMessage(chatId,
+          'Кажется, я достиг лимита ответов в этом треде, извините. Спрашивайте под следующим постом 🐤',
+          { replyToMessageId: message.message_id }
+        );
+        await store.setJSON(noticeKey, true, { metadata: { expiresAt } });
+      } else {
+        console.log(`[comment] thread=${message.message_thread_id} silently limited (already notified)`);
+      }
       return;
     }
 
     const newThreadCount = effectiveCount + 1;
     await store.setJSON(rateKey, newThreadCount, { metadata: { expiresAt } });
-
-    if (newThreadCount === commentCfg.per_thread_limit) {
-      console.log(`[comment] thread=${message.message_thread_id} hit per-thread limit`);
-      await sendMessage(chatId,
-        'Кажется, я достиг лимита ответов в этом треде, извините. Спрашивайте под следующим постом 🐤',
-        { replyToMessageId: message.message_id }
-      );
-      return;
-    }
   } else if (!isBoss) {
     console.log(`[comment] no message_thread_id — skipping per-thread check, per-user guard only`);
   }
