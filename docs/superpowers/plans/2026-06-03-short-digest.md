@@ -368,9 +368,9 @@ In `src/config/pipeline.json`, add a `short_digest` key inside the top-level obj
 
 ```json
   "short_digest": {
-    "generate": { "model": "claude-sonnet-4-6", "temperature": 0.8, "max_tokens": 2048, "tools": [] },
+    "generate": { "model": "claude-sonnet-5-20260401", "temperature": 0.8, "max_tokens": 2048, "tools": [] },
     "review": { "model": "claude-haiku-4-5-20251001", "temperature": 0.3, "max_tokens": 1024, "tools": [] },
-    "rewrite": { "model": "claude-sonnet-4-6", "temperature": 0.7, "max_tokens": 2048, "tools": [] },
+    "rewrite": { "model": "claude-sonnet-5-20260401", "temperature": 0.7, "max_tokens": 2048, "tools": [] },
     "fix": { "model": "claude-haiku-4-5-20251001", "temperature": 0.1, "max_tokens": 2048, "tools": [] }
   },
 ```

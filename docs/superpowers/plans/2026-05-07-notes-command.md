@@ -195,7 +195,7 @@ async function handleNotes(message: TelegramMessage): Promise<void> {
     const generatedPost = await callClaude({
       systemPrompt,
       userMessage: content,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5-20260401',
       temperature: 0.7,
       maxTokens: 2048,
     });

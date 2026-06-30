@@ -155,7 +155,7 @@ No retry loop — if validation fails, report error to Stepan. Notes-to-post is 
 
 No changes to `pipeline.json`. The notes command uses the same `allowed_user_ids` from `boss_command` config (read via `readBossConfig()`).
 
-Model: `claude-sonnet-4-6`, temperature `0.7`, max_tokens `2048` — hardcoded in `handleNotes`, consistent with rewrite step in boss-pipeline.
+Model: `claude-sonnet-5-20260401`, temperature `0.7`, max_tokens `2048` — hardcoded in `handleNotes`, consistent with rewrite step in boss-pipeline.
 
 ---
 

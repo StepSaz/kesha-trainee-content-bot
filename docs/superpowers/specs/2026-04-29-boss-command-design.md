@@ -104,7 +104,7 @@ interface BossPipelineResult {
 
 ### Step 1: Smart Review (always)
 
-- Model: `claude-sonnet-4-6`, temp `0.3`, max_tokens `1024`
+- Model: `claude-sonnet-5-20260401`, temp `0.3`, max_tokens `1024`
 - Prompt: `boss-review.txt`
 - Output: JSON с полями `verdict`, `verdict_reason`, `corrected_text`, `grammar_notes`
 - Retry: если JSON невалидный → 1 retry с напоминанием про формат → фейл
@@ -126,7 +126,7 @@ interface BossPipelineResult {
 
 ### Step 2B: RAW — Rewrite
 
-- Model: `claude-sonnet-4-6`, temp `0.6`, max_tokens `2048`
+- Model: `claude-sonnet-5-20260401`, temp `0.6`, max_tokens `2048`
 - Prompt: `boss-rewrite.txt`
 - Input: `reviewOutput.corrected_text`
 - Retry: если output содержит em-dash или markdown → 1 retry с reminder → фейл
@@ -239,8 +239,8 @@ answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>
   "max_input_length": 3500,
   "preview_timeout_minutes": 30,
   "models": {
-    "review":  { "model": "claude-sonnet-4-6", "temperature": 0.3, "max_tokens": 1024 },
-    "rewrite": { "model": "claude-sonnet-4-6", "temperature": 0.6, "max_tokens": 2048 }
+    "review":  { "model": "claude-sonnet-5-20260401", "temperature": 0.3, "max_tokens": 1024 },
+    "rewrite": { "model": "claude-sonnet-5-20260401", "temperature": 0.6, "max_tokens": 2048 }
   }
 }
 ```

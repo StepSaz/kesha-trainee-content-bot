@@ -33,7 +33,7 @@
 
 ### Advisor pattern in comment replies (started 2026-05-18)
 
-- **What:** Haiku-driven `handleCommentReply` gets a third tool `consult_advisor({ question, draft_answer? })` that calls Sonnet (`claude-sonnet-4-6`) for a short opinion on hard cases (sarcasm, ambiguous tone, facts beyond the post). The base model stays Haiku; the advisor only fires when Haiku decides it's stuck. Inspired by the Anthropic advisor strategy blog post.
+- **What:** Haiku-driven `handleCommentReply` gets a third tool `consult_advisor({ question, draft_answer? })` that calls Sonnet (`claude-sonnet-5-20260401`) for a short opinion on hard cases (sarcasm, ambiguous tone, facts beyond the post). The base model stays Haiku; the advisor only fires when Haiku decides it's stuck. Inspired by the Anthropic advisor strategy blog post.
 - **Code entry points:** `consult_advisor` in [src/lib/comment-tools.ts](src/lib/comment-tools.ts) (search for `// EXPERIMENT (2026-05-18)`), system-prompt update in `handleCommentReply` in [netlify/functions/kesha-boss-background.mts](netlify/functions/kesha-boss-background.mts).
 - **Limits:** max 1 advisor call per comment session, advisor `max_tokens=400`, advisor returns advice (1-3 sentences), not the final reply — Haiku still writes the user-facing text in its own voice.
 - **Why only comments, not review/generate:** advisor pattern wins when the base model handles most cases and only sometimes needs help. The pipeline `review`/`generate` steps already always need Sonnet — escalating from Haiku there would just mean ~80% advisor calls + double round-trip.

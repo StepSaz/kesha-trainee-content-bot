@@ -52,7 +52,7 @@ kesha-trainee-content-bot/
 - **Runtime:** Node.js + TypeScript
 - **Deploy:** Netlify Functions (scheduled + HTTP)
 - **AI SDK:** `@anthropic-ai/sdk`
-- **Model:** `claude-sonnet-4-6` across all steps
+- **Model:** `claude-sonnet-5-20260401` across all steps
 - **RSS parsing:** `fast-xml-parser`
 - **Telegram:** native fetch to Bot API
 
@@ -105,13 +105,13 @@ validatePost()
 ```json
 {
   "steps": {
-    "gatherWeb":    { "model": "claude-sonnet-4-6", "temperature": 0.3, "max_tokens": 2048, "tools": ["web_search"] },
-    "selectTopics": { "model": "claude-sonnet-4-6", "temperature": 0.3, "max_tokens": 1024, "tools": [] },
-    "generate":     { "model": "claude-sonnet-4-6", "temperature": 0.8, "max_tokens": 4096, "tools": ["web_search"] },
-    "review":       { "model": "claude-sonnet-4-6", "temperature": 0.3, "max_tokens": 2048, "tools": [] },
-    "rewrite":      { "model": "claude-sonnet-4-6", "temperature": 0.7, "max_tokens": 4096, "tools": [] }
+    "gatherWeb":    { "model": "claude-sonnet-5-20260401", "temperature": 0.3, "max_tokens": 2048, "tools": ["web_search"] },
+    "selectTopics": { "model": "claude-sonnet-5-20260401", "temperature": 0.3, "max_tokens": 1024, "tools": [] },
+    "generate":     { "model": "claude-sonnet-5-20260401", "temperature": 0.8, "max_tokens": 4096, "tools": ["web_search"] },
+    "review":       { "model": "claude-sonnet-5-20260401", "temperature": 0.3, "max_tokens": 2048, "tools": [] },
+    "rewrite":      { "model": "claude-sonnet-5-20260401", "temperature": 0.7, "max_tokens": 4096, "tools": [] }
   },
-  "managed": { "model": "claude-sonnet-4-6" },
+  "managed": { "model": "claude-sonnet-5-20260401" },
   "max_review_cycles": 1
 }
 ```

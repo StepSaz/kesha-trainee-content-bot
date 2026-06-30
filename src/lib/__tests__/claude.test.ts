@@ -25,7 +25,7 @@ import { callClaude, callClaudeWithTools, parseRetryAfter, type ToolDef, type To
 const BASE_PARAMS = {
   systemPrompt: 'You are helpful.',
   userMessage: 'Hello',
-  model: 'claude-sonnet-4-6',
+  model: 'claude-sonnet-5-20260401',
   temperature: 0.5,
   maxTokens: 100,
 };
@@ -83,11 +83,11 @@ describe('callClaude', () => {
   it('passes model, temperature, max_tokens to API', async () => {
     mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
 
-    await callClaude({ ...BASE_PARAMS, model: 'claude-sonnet-4-6', temperature: 0.8, maxTokens: 4096 });
+    await callClaude({ ...BASE_PARAMS, model: 'claude-sonnet-5-20260401', temperature: 0.8, maxTokens: 4096 });
 
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5-20260401',
         temperature: 0.8,
         max_tokens: 4096,
       })

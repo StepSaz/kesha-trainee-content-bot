@@ -73,7 +73,7 @@ New key in `pipeline.json`:
 
 ```json
 "experience": {
-  "model": "claude-sonnet-4-6",
+  "model": "claude-sonnet-5-20260401",
   "temperature": 0.7,
   "max_tokens": 1024,
   "tools": []
