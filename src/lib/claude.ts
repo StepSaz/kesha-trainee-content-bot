@@ -78,6 +78,14 @@ function logCacheUsage(label: string, usage: Anthropic.Message['usage'] | undefi
   }
 }
 
+function messageOptions(params: { model: string; temperature: number; maxTokens: number }) {
+  return {
+    model: params.model,
+    max_tokens: params.maxTokens,
+    ...(params.model === 'claude-sonnet-5' ? {} : { temperature: params.temperature }),
+  };
+}
+
 export async function callClaude(params: CallClaudeParams): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 });
 
@@ -93,14 +101,12 @@ export async function callClaude(params: CallClaudeParams): Promise<string> {
     : params.systemPrompt;
 
   const response = await withRateLimitRetry('callClaude', () => client.messages.create({
-    model: params.model,
+    ...messageOptions(params),
     system,
     messages: [
       ...(params.conversationHistory ?? []),
       { role: 'user', content: params.userMessage },
     ],
-    temperature: params.temperature,
-    max_tokens: params.maxTokens,
     ...(tools ? { tools } : {}),
   } as any));
 
@@ -186,11 +192,9 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
 
   for (let i = 0; i < params.maxIterations; i++) {
     const response = await withRateLimitRetry('callClaudeWithTools', () => client.messages.create({
-      model: params.model,
+      ...messageOptions(params),
       system: params.systemPrompt,
       messages,
-      temperature: params.temperature,
-      max_tokens: params.maxTokens,
       tools: mergedTools as unknown as Anthropic.Tool[],
     } as any));
 
@@ -237,11 +241,9 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
 
   console.log(`[claude:tools] max iterations (${params.maxIterations}) reached — forcing final answer without tools`);
   const final = await withRateLimitRetry('callClaudeWithTools:final', () => client.messages.create({
-    model: params.model,
+    ...messageOptions(params),
     system: params.systemPrompt,
     messages,
-    temperature: params.temperature,
-    max_tokens: params.maxTokens,
   } as any));
   const text = extractFinalText(final);
   // Defensive fallback: if the model still emitted only tool_use (no text) on the no-tools call,
@@ -270,11 +272,9 @@ export async function callClaudeStructured<T>(params: CallClaudeStructuredParams
     : params.systemPrompt;
 
   const response = await withRateLimitRetry('callClaudeStructured', () => client.messages.create({
-    model: params.model,
+    ...messageOptions(params),
     system,
     messages: [{ role: 'user', content: params.userMessage }],
-    temperature: params.temperature,
-    max_tokens: params.maxTokens,
     tools: [params.tool],
     tool_choice: { type: 'tool', name: params.tool.name },
   } as any));

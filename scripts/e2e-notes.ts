@@ -56,14 +56,14 @@ async function main() {
     process.exit(1);
   }
 
-  section('Claude call (claude-sonnet-5-20260401, ~10-30s)');
+  section('Claude call (claude-sonnet-5, ~10-30s)');
   const t0 = Date.now();
   let post: string | null;
   try {
     post = await callClaude({
       systemPrompt,
       userMessage: SAMPLE_NOTES,
-      model: 'claude-sonnet-5-20260401',
+      model: 'claude-sonnet-5',
       temperature: 0.7,
       maxTokens: 2048,
     });

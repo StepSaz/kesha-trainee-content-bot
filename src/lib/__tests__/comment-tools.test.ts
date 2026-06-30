@@ -169,7 +169,7 @@ describe('makeExecuteTool: consult_advisor', () => {
     expect(result).toBe('не отвечай сарказмом, он спрашивает серьёзно');
     expect(callClaude).toHaveBeenCalledTimes(1);
     const args = vi.mocked(callClaude).mock.calls[0][0];
-    expect(args.model).toBe('claude-sonnet-5-20260401');
+    expect(args.model).toBe('claude-sonnet-5');
     expect(args.userMessage).toContain('это сарказм или нет?');
     expect(args.userMessage).toContain('спасибо за фидбек');
   });

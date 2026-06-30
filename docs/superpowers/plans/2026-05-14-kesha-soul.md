@@ -21,7 +21,7 @@ Add a new `experience` entry inside `steps`, after `selectTopics`:
 
 ```json
 "experience": {
-  "model": "claude-sonnet-5-20260401",
+  "model": "claude-sonnet-5",
   "temperature": 0.7,
   "max_tokens": 1024,
   "tools": []
@@ -32,19 +32,19 @@ The full `steps` block becomes (showing neighbors only):
 
 ```json
 "selectTopics": {
-  "model": "claude-sonnet-5-20260401",
+  "model": "claude-sonnet-5",
   "temperature": 0.3,
   "max_tokens": 2048,
   "tools": []
 },
 "experience": {
-  "model": "claude-sonnet-5-20260401",
+  "model": "claude-sonnet-5",
   "temperature": 0.7,
   "max_tokens": 1024,
   "tools": []
 },
 "generate": {
-  "model": "claude-sonnet-5-20260401",
+  "model": "claude-sonnet-5",
   "temperature": 0.8,
   "max_tokens": 4096,
   "tools": []

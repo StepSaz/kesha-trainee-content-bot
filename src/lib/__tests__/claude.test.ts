@@ -20,12 +20,12 @@ vi.mock('@anthropic-ai/sdk', () => {
 });
 
 import Anthropic from '@anthropic-ai/sdk';
-import { callClaude, callClaudeWithTools, parseRetryAfter, type ToolDef, type ToolResult } from '../claude.js';
+import { callClaude, callClaudeStructured, callClaudeWithTools, parseRetryAfter, type ToolDef, type ToolResult } from '../claude.js';
 
 const BASE_PARAMS = {
   systemPrompt: 'You are helpful.',
   userMessage: 'Hello',
-  model: 'claude-sonnet-5-20260401',
+  model: 'claude-sonnet-5',
   temperature: 0.5,
   maxTokens: 100,
 };
@@ -80,18 +80,31 @@ describe('callClaude', () => {
     expect(callArgs.tools).toBeUndefined();
   });
 
-  it('passes model, temperature, max_tokens to API', async () => {
+  it('passes model, temperature, max_tokens to API for models that support temperature', async () => {
     mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
 
-    await callClaude({ ...BASE_PARAMS, model: 'claude-sonnet-5-20260401', temperature: 0.8, maxTokens: 4096 });
+    await callClaude({ ...BASE_PARAMS, model: 'claude-haiku-4-5-20251001', temperature: 0.8, maxTokens: 4096 });
 
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'claude-sonnet-5-20260401',
+        model: 'claude-haiku-4-5-20251001',
         temperature: 0.8,
         max_tokens: 4096,
       })
     );
+  });
+
+  it('omits temperature for Claude Sonnet 5', async () => {
+    mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+
+    await callClaude({ ...BASE_PARAMS, model: 'claude-sonnet-5', temperature: 0.8, maxTokens: 4096 });
+
+    const callArgs = mockCreate.mock.calls[0][0];
+    expect(callArgs).toMatchObject({
+      model: 'claude-sonnet-5',
+      max_tokens: 4096,
+    });
+    expect(callArgs.temperature).toBeUndefined();
   });
 
   it('passes system prompt as plain string when cacheSystem is not set', async () => {
@@ -286,6 +299,31 @@ describe('callClaudeWithTools', () => {
     expect(result).toContain('завис');
   });
 
+  it('omits temperature for Claude Sonnet 5 forced-final tool calls', async () => {
+    mockCreate
+      .mockResolvedValueOnce({
+        stop_reason: 'tool_use',
+        content: [{ type: 'tool_use', id: 't1', name: 'extract_url', input: { url: 'https://x' } }],
+      })
+      .mockResolvedValueOnce({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'forced answer' }],
+      });
+
+    await callClaudeWithTools({
+      ...BASE_PARAMS,
+      model: 'claude-sonnet-5',
+      tools: TOOLS,
+      executeTool: vi.fn().mockResolvedValue('tool result'),
+      maxIterations: 1,
+    });
+
+    const finalCall = mockCreate.mock.calls[1][0];
+    expect(finalCall.model).toBe('claude-sonnet-5');
+    expect(finalCall.temperature).toBeUndefined();
+    expect(finalCall.tools).toBeUndefined();
+  });
+
   it('passes maxRetries: 0 to Anthropic constructor to disable SDK-level retries', async () => {
     mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
 
@@ -293,6 +331,25 @@ describe('callClaudeWithTools', () => {
 
     const MockClient = vi.mocked(Anthropic);
     expect(MockClient).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0 }));
+  });
+
+  it('omits temperature for Claude Sonnet 5 tool calls', async () => {
+    mockCreate.mockResolvedValueOnce({
+      stop_reason: 'end_turn',
+      content: [{ type: 'text', text: 'no tools needed' }],
+    });
+
+    await callClaudeWithTools({
+      ...BASE_PARAMS,
+      model: 'claude-sonnet-5',
+      tools: TOOLS,
+      executeTool: vi.fn(),
+      maxIterations: 3,
+    });
+
+    const callArgs = mockCreate.mock.calls[0][0];
+    expect(callArgs.model).toBe('claude-sonnet-5');
+    expect(callArgs.temperature).toBeUndefined();
   });
 
   it('handles multiple tool_use blocks in a single response', async () => {
@@ -326,6 +383,35 @@ describe('callClaudeWithTools', () => {
     expect(followupContent).toHaveLength(2);
     expect(followupContent[0]).toMatchObject({ tool_use_id: 'a', content: 'content-1' });
     expect(followupContent[1]).toMatchObject({ tool_use_id: 'b', content: 'content-2' });
+  });
+});
+
+describe('callClaudeStructured', () => {
+  const TOOL: ToolDef = {
+    name: 'return_json',
+    description: 'return structured data',
+    input_schema: {
+      type: 'object',
+      properties: { ok: { type: 'boolean' } },
+      required: ['ok'],
+    },
+  };
+
+  it('omits temperature for Claude Sonnet 5 structured calls', async () => {
+    mockCreate.mockResolvedValue({
+      content: [{ type: 'tool_use', id: 'tu_1', name: 'return_json', input: { ok: true } }],
+    });
+
+    const result = await callClaudeStructured<{ ok: boolean }>({
+      ...BASE_PARAMS,
+      model: 'claude-sonnet-5',
+      tool: TOOL,
+    });
+
+    expect(result).toEqual({ ok: true });
+    const callArgs = mockCreate.mock.calls[0][0];
+    expect(callArgs.model).toBe('claude-sonnet-5');
+    expect(callArgs.temperature).toBeUndefined();
   });
 });
 

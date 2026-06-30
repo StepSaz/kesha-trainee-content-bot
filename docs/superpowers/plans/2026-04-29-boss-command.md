@@ -50,13 +50,13 @@ Open `src/config/pipeline.json` and add after the closing `}` of `"managed"`. Th
       "tools": ["web_search"]
     },
     "selectTopics": {
-      "model": "claude-sonnet-5-20260401",
+      "model": "claude-sonnet-5",
       "temperature": 0.3,
       "max_tokens": 2048,
       "tools": []
     },
     "generate": {
-      "model": "claude-sonnet-5-20260401",
+      "model": "claude-sonnet-5",
       "temperature": 0.8,
       "max_tokens": 4096,
       "tools": []
@@ -68,7 +68,7 @@ Open `src/config/pipeline.json` and add after the closing `}` of `"managed"`. Th
       "tools": []
     },
     "rewrite": {
-      "model": "claude-sonnet-5-20260401",
+      "model": "claude-sonnet-5",
       "temperature": 0.7,
       "max_tokens": 4096,
       "tools": []
@@ -81,7 +81,7 @@ Open `src/config/pipeline.json` and add after the closing `}` of `"managed"`. Th
     }
   },
   "managed": {
-    "model": "claude-sonnet-5-20260401"
+    "model": "claude-sonnet-5"
   },
   "max_review_cycles": 1,
   "boss_command": {
@@ -92,12 +92,12 @@ Open `src/config/pipeline.json` and add after the closing `}` of `"managed"`. Th
     "preview_timeout_minutes": 30,
     "models": {
       "review": {
-        "model": "claude-sonnet-5-20260401",
+        "model": "claude-sonnet-5",
         "temperature": 0.3,
         "max_tokens": 1024
       },
       "rewrite": {
-        "model": "claude-sonnet-5-20260401",
+        "model": "claude-sonnet-5",
         "temperature": 0.6,
         "max_tokens": 2048
       }

@@ -22,7 +22,7 @@ const SEARCH_CHUNKS_PER_SOURCE = 5;
 const SEARCH_MIN_SCORE = 0.4;
 const SEARCH_EXCLUDE_DOMAINS = ['reddit.com', 'quora.com'];
 
-const ADVISOR_MODEL = 'claude-sonnet-5-20260401';
+const ADVISOR_MODEL = 'claude-sonnet-5';
 const ADVISOR_MAX_TOKENS = 400;
 const ADVISOR_SYSTEM_PROMPT =
   'Ты старший напарник стажёра-бота Кеши. Кеша работает на дешёвой модели и отвечает на комментарии под постами Telegram-канала про AI/tech. Когда он сомневается — спрашивает тебя. Дай короткий, конкретный совет (1-3 предложения): как лучше ответить, на что обратить внимание, где Кеша ошибается. Не пиши финальный ответ за него — он сам напишет в своём стиле. Без markdown, без em-dash.';
