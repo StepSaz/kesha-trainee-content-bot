@@ -1,6 +1,7 @@
 async function main() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const siteUrl = process.env.NETLIFY_SITE_URL;
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 
   if (!token) {
     console.error('Error: TELEGRAM_BOT_TOKEN not set');
@@ -12,6 +13,12 @@ async function main() {
     process.exit(1);
   }
 
+  if (!webhookSecret) {
+    console.error('Error: TELEGRAM_WEBHOOK_SECRET not set (generate with: openssl rand -hex 32).');
+    console.error('The same value must be set in Netlify env vars so the function can verify updates.');
+    process.exit(1);
+  }
+
   const webhookUrl = `${siteUrl}/.netlify/functions/kesha-boss-background`;
   const apiBase = `https://api.telegram.org/bot${token}`;
 
@@ -20,7 +27,7 @@ async function main() {
   const webhookRes = await fetch(`${apiBase}/setWebhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: webhookUrl }),
+    body: JSON.stringify({ url: webhookUrl, secret_token: webhookSecret }),
   });
   const webhookData = await webhookRes.json() as { ok: boolean; description?: string };
   if (!webhookData.ok) {

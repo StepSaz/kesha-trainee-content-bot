@@ -835,6 +835,17 @@ async function handleDmChat(message: TelegramMessage): Promise<void> {
 }
 
 export default async (req: Request): Promise<Response> => {
+  // Verify Telegram's webhook secret before touching the body. The secret is registered
+  // via setWebhook secret_token (scripts/setup-boss-webhook.ts) and Telegram echoes it in
+  // this header on every update. If the env var is unset (local dev / tests) verification
+  // is skipped — in production TELEGRAM_WEBHOOK_SECRET MUST be set on Netlify, otherwise
+  // anyone who knows the function URL can POST forged updates.
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (webhookSecret && req.headers.get('X-Telegram-Bot-Api-Secret-Token') !== webhookSecret) {
+    console.warn('[boss] rejected update: missing or invalid X-Telegram-Bot-Api-Secret-Token');
+    return new Response('Unauthorized', { status: 401 });
+  }
+
   let update: TelegramUpdate;
   try {
     update = await req.json() as TelegramUpdate;
