@@ -324,6 +324,33 @@ describe('callClaudeWithTools', () => {
     expect(finalCall.tools).toBeUndefined();
   });
 
+  it('logs token usage for each loop iteration and the forced final call', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mockCreate
+      .mockResolvedValueOnce({
+        stop_reason: 'tool_use',
+        content: [{ type: 'tool_use', id: 't1', name: 'extract_url', input: { url: 'https://x' } }],
+        usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 50 },
+      })
+      .mockResolvedValueOnce({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'forced answer' }],
+        usage: { input_tokens: 200, output_tokens: 30 },
+      });
+
+    await callClaudeWithTools({
+      ...BASE_PARAMS,
+      tools: TOOLS,
+      executeTool: vi.fn().mockResolvedValue('tool result'),
+      maxIterations: 1,
+    });
+
+    const logs = logSpy.mock.calls.map(c => c[0]);
+    expect(logs).toContain('[claude:callClaudeWithTools:iter1] tokens in=100 cache_write=0 cache_read=50 out=20');
+    expect(logs).toContain('[claude:callClaudeWithTools:final] tokens in=200 out=30');
+    logSpy.mockRestore();
+  });
+
   it('passes maxRetries: 0 to Anthropic constructor to disable SDK-level retries', async () => {
     mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
 

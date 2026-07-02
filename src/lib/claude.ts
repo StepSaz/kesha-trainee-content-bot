@@ -82,6 +82,7 @@ function messageOptions(params: { model: string; temperature: number; maxTokens:
   return {
     model: params.model,
     max_tokens: params.maxTokens,
+    // Sonnet 5 returns 400 on non-default sampling params.
     ...(params.model === 'claude-sonnet-5' ? {} : { temperature: params.temperature }),
   };
 }
@@ -198,6 +199,8 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
       tools: mergedTools as unknown as Anthropic.Tool[],
     } as any));
 
+    logCacheUsage(`callClaudeWithTools:iter${i + 1}`, response.usage);
+
     // Surface server-side tool calls for telemetry/tests even though they
     // don't need a client-side response.
     if (params.onToolUse) {
@@ -245,6 +248,7 @@ export async function callClaudeWithTools(params: CallClaudeWithToolsParams): Pr
     system: params.systemPrompt,
     messages,
   } as any));
+  logCacheUsage('callClaudeWithTools:final', final.usage);
   const text = extractFinalText(final);
   // Defensive fallback: if the model still emitted only tool_use (no text) on the no-tools call,
   // we'd otherwise drop the reply silently. Better to say something honest.
