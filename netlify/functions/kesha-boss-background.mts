@@ -123,10 +123,26 @@ type PendingDigest =
   | (PendingDigestBase & { variant: 'full'; newIntros: string[] })
   | (PendingDigestBase & { variant: 'short'; newShortIntros: string[] });
 
-function readBossConfig(): BossConfig {
+function parseBossUserIds(value: string | undefined): number[] | null {
+  if (!value?.trim()) return null;
+  const ids = value.split(',').map((part) => Number(part.trim())).filter((id) => Number.isFinite(id));
+  if (ids.length === 0) {
+    throw new Error('TELEGRAM_BOSS_USER_IDS/TELEGRAM_BOSS_USER_ID must contain at least one numeric Telegram user id.');
+  }
+  return ids;
+}
+
+export function readBossConfig(): BossConfig {
   const raw = readFileSync(join(process.cwd(), 'src/config/pipeline.json'), 'utf-8');
   const parsed = JSON.parse(raw) as { boss_command: BossConfig };
-  return parsed.boss_command;
+  const envAllowedUserIds =
+    parseBossUserIds(process.env.TELEGRAM_BOSS_USER_IDS) ??
+    parseBossUserIds(process.env.TELEGRAM_BOSS_USER_ID);
+
+  return {
+    ...parsed.boss_command,
+    allowed_user_ids: envAllowedUserIds ?? parsed.boss_command.allowed_user_ids,
+  };
 }
 
 async function handleCommand(message: TelegramMessage): Promise<void> {

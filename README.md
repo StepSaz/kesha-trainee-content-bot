@@ -26,6 +26,7 @@ Fill in:
 - `TELEGRAM_BOT_TOKEN` — from [@BotFather](https://t.me/BotFather)
 - `TELEGRAM_CHAT_ID` — `@CtrlAltTherapy_test` (test) or `@psyreq` (prod)
 - `TELEGRAM_TEST_CHAT_ID` — your personal Telegram chat ID
+- `TELEGRAM_BOSS_USER_IDS` — comma-separated Telegram user IDs allowed to run `/boss`, `/digest`, and `/notes`
 - `TEST_SECRET` — run `openssl rand -hex 32`
 
 ### 3. Run tests

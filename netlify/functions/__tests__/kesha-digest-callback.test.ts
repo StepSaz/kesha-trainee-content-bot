@@ -31,7 +31,6 @@ const mockSendToChannel = vi.mocked(sendToChannel);
 const mockAnswerCallback = vi.mocked(answerCallbackQuery);
 const mockAppendMemory = vi.mocked(appendMemory);
 
-// Boss id from src/config/pipeline.json -> boss_command.allowed_user_ids[0].
 const BOSS_ID = 352830345;
 const CHAT_ID = '5';
 
@@ -54,6 +53,7 @@ const callback = (data: string, fromId = BOSS_ID, chatId = CHAT_ID) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.TELEGRAM_CHAT_ID = 'channel';
+  process.env.TELEGRAM_BOSS_USER_IDS = String(BOSS_ID);
   mockSendToChannel.mockResolvedValue({ success: true, messageId: 42 });
 });
 

@@ -61,7 +61,7 @@
   "max_review_cycles": 1,
   "boss_command": {
     "enabled": true,
-    "allowed_user_ids": [352830345],
+    "allowed_user_ids": [],
     "min_input_length": 50,
     "max_input_length": 3500,
     "preview_timeout_minutes": 30,
